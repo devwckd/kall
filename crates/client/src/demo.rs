@@ -117,6 +117,42 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
             set.crop = Some(crop);
         }
     }),
+    ("files", |s| {
+        // Every kind of attachment, and files waiting in the composer (made-up files and drawn
+        // pictures, not real captures).
+        load(s, 1);
+        use crate::files::{Dl, DlState, Pending, Up};
+        use kall_proto::files::{Attachment, FileKind};
+        let att = |id, name: &str, size, kind, w, h, thumb, expired| Attachment { id, name: name.into(), size, kind, width: w, height: h, thumb, expired };
+        let shot = att(900, "screenshot.png", 812_000, FileKind::Image, 1600, 900, true, false);
+        let clip = att(901, "clutch-round.mp4", 48_200_000, FileKind::Video, 0, 0, false, false);
+        let song = att(902, "lofi-demo.mp3", 6_100_000, FileKind::Audio, 0, 0, false, false);
+        let doc = att(903, "dungeon-map.pdf", 2_400_000, FileKind::Other, 0, 0, false, false);
+        let old = att(904, "old-build.zip", 61_000_000, FileKind::Other, 0, 0, false, true);
+        s.files.thumbs.insert(900, fake_screen(480, 270));
+        s.files.cache.insert(901, Dl { done: 19_000_000, total: 48_200_000, state: DlState::Running });
+        s.files.saved.insert(903, Dl { done: 2_400_000, total: 2_400_000, state: DlState::Done(std::path::PathBuf::from("Downloads/dungeon-map.pdf")) });
+        if let Some(m) = &mut s.m {
+            let t = now();
+            let log = m.logs.entry(1).or_default();
+            log.msgs.retain(|m| m.id < 6);
+            let mk = |id, author, body: &str, attachments| Message { id, channel: 1, author, body: body.into(), reply_to: None, created: t - 60_000, edited: None, preview: None, attachments };
+            log.msgs.push(mk(20, 2, "look at this", vec![shot]));
+            log.msgs.push(mk(21, 4, "", vec![clip, song]));
+            log.msgs.push(mk(22, 1, "map for friday", vec![doc, old]));
+        }
+        s.files.pending = vec![
+            Pending { job: 1, name: "vacation.jpg".into(), size: 3_400_000, done: 1_500_000, state: Up::Sending },
+            Pending { job: 2, name: "notes.txt".into(), size: 1_200, done: 1_200, state: Up::Ready(att(905, "notes.txt", 1_200, FileKind::Other, 0, 0, false, false)) },
+            Pending { job: 3, name: "huge-video.mkv".into(), size: 300_000_000, done: 0, state: Up::Failed("Files can be up to 100 MB.".into()) },
+        ];
+    }),
+    ("image-viewer", |s| {
+        load(s, 1);
+        let shot = kall_proto::files::Attachment { id: 900, name: "screenshot.png".into(), size: 812_000, kind: kall_proto::files::FileKind::Image, width: 1600, height: 900, thumb: true, expired: false };
+        s.files.full.lock().unwrap().insert(900, fake_screen(1600, 900));
+        s.files.viewer = Some(shot);
+    }),
     ("app-settings", |s| {
         load(s, 1);
         crate::ui::settings::open(s, Tab::App);
@@ -231,7 +267,7 @@ fn load(s: &mut State, channel: i64) {
         user(5, "juno", "juno", Role::Member, Status::Online, "", true),
         user(6, "rex", "Rex", Role::Member, Status::Online, "", false),
     ];
-    let msg = |id, author, ago: i64, body: &str, reply_to| Message { id, channel: 1, author, body: body.into(), reply_to, created: t - ago * min, edited: None, preview: None };
+    let msg = |id, author, ago: i64, body: &str, reply_to| Message { id, channel: 1, author, body: body.into(), reply_to, created: t - ago * min, edited: None, preview: None, attachments: vec![] };
     let mut msgs = vec![
         msg(1, 2, 60 * 26, "anyone up for games tonight?", None),
         msg(2, 3, 60 * 26 - 2, "after 9 maybe", None),
@@ -252,6 +288,7 @@ fn load(s: &mut State, channel: i64) {
     });
     let ch = |id, name: &str, kind, last| Channel { id, name: name.into(), kind, position: id, bitrate: 64_000, last_message: last };
     let snap = Snapshot {
+        files: kall_proto::files::FileLimits { max_bytes: 100_000_000, keep_days: 30 },
         server_name: "The Basement".into(),
         me: 1,
         users,

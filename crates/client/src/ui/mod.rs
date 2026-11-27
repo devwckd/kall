@@ -2,6 +2,7 @@
 //! layered on top. Look: clean and minimal, edge-to-edge panes split by hairlines, one emerald
 //! accent, dark and light themes following the system.
 
+pub mod attachments;
 pub mod audio_menu;
 pub mod avatar_crop;
 mod chat;
@@ -283,6 +284,9 @@ pub fn view(s: &State, cx: &mut Cx<State>) -> El {
     }
     if let Some(menu) = audio_menu::layer(s) {
         layers = layers.child(menu);
+    }
+    if let Some(v) = attachments::viewer(s) {
+        layers = layers.child(v);
     }
     with_toast(s, layers)
 }

@@ -25,6 +25,14 @@ pub enum Auth {
 pub enum NetCmd {
     Connect { server: String, auth: Auth },
     Send(C2S),
+    /// Upload a file on a stream of its own (job ids come from the UI).
+    Upload { job: u64, path: PathBuf },
+    /// Download a file to `dest` (written as `dest.part`, renamed when complete).
+    Download { job: u64, file: kall_proto::Id, dest: PathBuf },
+    /// Fetch an image's preview; answered with `Thumb`.
+    FetchThumb { file: kall_proto::Id },
+    /// Stop an upload or download.
+    Cancel(u64),
     /// Load a picked image for the avatar crop view; answered with `AvatarSource`. The cropped
     /// result is only uploaded when the profile is saved.
     PrepareAvatar(PathBuf),
@@ -43,6 +51,13 @@ pub enum NetEvent {
     LoggedOut { reason: Option<String>, pin_mismatch: bool },
     Disconnected { retry_in: u64 },
     Notice(String),
+    /// A transfer moved on.
+    Progress { job: u64, done: u64, total: u64 },
+    Uploaded { job: u64, attachment: kall_proto::files::Attachment },
+    Downloaded { job: u64, path: PathBuf },
+    TransferFailed { job: u64, error: String },
+    /// An image's preview, decoded.
+    Thumb { file: kall_proto::Id, w: u32, h: u32, rgba: Vec<u8> },
     /// The picked avatar image (width, height, RGBA; at most 1024 px a side), or why it
     /// couldn't be used.
     AvatarSource(Result<(u32, u32, Vec<u8>), String>),
@@ -150,6 +165,7 @@ pub fn start(wake: rune::Waker) -> Net {
     Net { tx, events, voice }
 }
 
+#[derive(Clone)]
 struct Events {
     tx: mpsc::Sender<NetEvent>,
     wake: rune::Waker,
@@ -305,6 +321,8 @@ async fn session(
         }
     });
     let (mut send, mut recv) = (c.send, c.recv);
+    // File transfers in flight, so they can be cancelled (and stop with the connection).
+    let mut jobs: std::collections::HashMap<u64, tokio::task::AbortHandle> = Default::default();
     let (in_tx, mut in_rx) = unbounded_channel::<Result<Option<S2C>>>();
     let reader = tokio::spawn(async move {
         loop {
@@ -342,6 +360,22 @@ async fn session(
                         break End::Lost;
                     }
                 }
+                Some(NetCmd::Upload { job, path }) => {
+                    let h = tokio::spawn(transfer_upload(c.conn.clone(), job, path, ev.clone()));
+                    jobs.insert(job, h.abort_handle());
+                }
+                Some(NetCmd::Download { job, file, dest }) => {
+                    let h = tokio::spawn(transfer_download(c.conn.clone(), job, file, dest, ev.clone()));
+                    jobs.insert(job, h.abort_handle());
+                }
+                Some(NetCmd::FetchThumb { file }) => {
+                    tokio::spawn(fetch_thumb(c.conn.clone(), file, ev.clone()));
+                }
+                Some(NetCmd::Cancel(job)) => {
+                    if let Some(h) = jobs.remove(&job) {
+                        h.abort();
+                    }
+                }
                 Some(NetCmd::PrepareAvatar(path)) => {
                     let r = tokio::task::spawn_blocking(move || avatar_source(&path)).await?;
                     ev.emit(NetEvent::AvatarSource(r.map_err(|e| format!("Couldn't use that image: {e}"))));
@@ -359,11 +393,73 @@ async fn session(
     };
     reader.abort();
     datagrams.abort();
+    for (_, h) in jobs {
+        h.abort();
+    }
     c.conn.close(0u32.into(), b"bye");
     Ok(end)
 }
 
 /// Any image → a 128×128 centre-cropped PNG.
+/// Progress events at most ten times a second (and always the last one).
+fn throttled(ev: &Events, job: u64) -> impl FnMut(u64, u64) + '_ {
+    let mut last = std::time::Instant::now() - Duration::from_secs(1);
+    move |done, total| {
+        if done == total || last.elapsed() >= Duration::from_millis(100) {
+            last = std::time::Instant::now();
+            ev.emit(NetEvent::Progress { job, done, total });
+        }
+    }
+}
+
+async fn transfer_upload(conn: quinn::Connection, job: u64, path: PathBuf, ev: Events) {
+    let r = async {
+        let f = tokio::fs::File::open(&path).await?;
+        let size = f.metadata().await?.len();
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "file".into());
+        let mut progress = throttled(&ev, job);
+        kall_proto::client::upload(&conn, &name, size, tokio::io::BufReader::new(f), |n| progress(n, size)).await
+    }
+    .await;
+    ev.emit(match r {
+        Ok(attachment) => NetEvent::Uploaded { job, attachment },
+        Err(e) => NetEvent::TransferFailed { job, error: format!("{e:#}") },
+    });
+}
+
+async fn transfer_download(conn: quinn::Connection, job: u64, file: kall_proto::Id, dest: PathBuf, ev: Events) {
+    let part = dest.with_extension(format!("{}part", dest.extension().map(|e| format!("{}.", e.to_string_lossy())).unwrap_or_default()));
+    let r = async {
+        if let Some(dir) = dest.parent() {
+            tokio::fs::create_dir_all(dir).await?;
+        }
+        let f = tokio::fs::File::create(&part).await?;
+        let mut progress = throttled(&ev, job);
+        kall_proto::client::download(&conn, file, false, tokio::io::BufWriter::new(f), |d, t| progress(d, t)).await?;
+        tokio::fs::rename(&part, &dest).await?;
+        anyhow::Ok(())
+    }
+    .await;
+    if r.is_err() {
+        tokio::fs::remove_file(&part).await.ok();
+    }
+    ev.emit(match r {
+        Ok(()) => NetEvent::Downloaded { job, path: dest },
+        Err(e) => NetEvent::TransferFailed { job, error: format!("{e:#}") },
+    });
+}
+
+async fn fetch_thumb(conn: quinn::Connection, file: kall_proto::Id, ev: Events) {
+    let mut png = Vec::new();
+    if kall_proto::client::download(&conn, file, true, &mut png, |_, _| {}).await.is_err() {
+        return;
+    }
+    if let Ok(Ok(img)) = tokio::task::spawn_blocking(move || image::load_from_memory(&png)).await {
+        let rgba = img.to_rgba8();
+        ev.emit(NetEvent::Thumb { file, w: rgba.width(), h: rgba.height(), rgba: rgba.into_raw() });
+    }
+}
+
 /// A picked image, scaled down to at most 1024 px a side (plenty to crop a 128 px avatar from).
 fn avatar_source(path: &PathBuf) -> Result<(u32, u32, Vec<u8>)> {
     let mut img = image::open(path)?;

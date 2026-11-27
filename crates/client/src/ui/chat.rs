@@ -294,11 +294,14 @@ pub fn view(s: &State, m: &Model, ch: &Channel) -> El {
             }
             content = content.child(head);
         }
-        let mut body_row = col().w_full().child(body);
+        let mut body_row = col().w_full();
+        if !msg.body.is_empty() {
+            body_row = body_row.child(body);
+        }
         if msg.edited.is_some() {
             body_row = body_row.child(text("(edited)").font(TextStyle::new(11.0, 400.0)).color(p.faint));
         }
-        content = content.child(body_row).children(preview_card(msg));
+        content = content.child(body_row).children(preview_card(msg)).children(super::attachments::in_message(s, msg));
         let lead = if grouped { el().w(42.0) } else { avatar(m, msg.author, 42.0, false) };
         let id = msg.id;
         let editing = s.editing == Some(id);
@@ -333,7 +336,7 @@ pub fn view(s: &State, m: &Model, ch: &Channel) -> El {
         list = list.child(item);
     }
 
-    panel(col().grow(1.0).shrink().h_full())
+    let mut pane = panel(col().grow(1.0).shrink().h_full())
         .child(header)
         .child(
             col()
@@ -346,6 +349,31 @@ pub fn view(s: &State, m: &Model, ch: &Channel) -> El {
                 .child(list),
         )
         .child(composer(s, m, ch))
+        // Drop files anywhere on the chat to attach them.
+        .on_drop_files(|s: &mut State, files, _| {
+            s.files.drop_hover = false;
+            s.attach_paths(files);
+        })
+        .on_drop_hover(|s: &mut State, over, _| s.files.drop_hover = over);
+    if s.files.drop_hover {
+        pane = pane.child(
+            el().key("drop-here")
+                .pin(Some(12.0), Some(12.0), Some(12.0), Some(12.0))
+                .radius(14.0)
+                .fill(p.accent.alpha(0.12))
+                .border(2.0, p.accent)
+                .center()
+                .child(
+                    col()
+                        .gap(8.0)
+                        .items_center()
+                        .child(glyph(&icons::PAPERCLIP, 32.0, p.accent2))
+                        .child(text("Drop files to upload").font(TextStyle::new(17.0, 650.0)).color(p.text))
+                        .child(text(format!("Up to {} each", kall_proto::files::human_size(m.limits.max_bytes))).font(type_::LABEL).color(p.muted)),
+                ),
+        );
+    }
+    pane
 }
 
 fn composer(s: &State, m: &Model, ch: &Channel) -> El {
@@ -411,8 +439,29 @@ fn composer(s: &State, m: &Model, ch: &Channel) -> El {
             }
             _ => false,
         })
+        // Pasting an image (a screenshot) or files attaches them; text pastes as usual.
+        .on_input_paste(|s: &mut State, content, _| {
+            if let Some(img) = content.image() {
+                s.attach_png(img.png());
+                true
+            } else if !content.files().is_empty() {
+                let files = content.files().to_vec();
+                s.attach_paths(&files);
+                true
+            } else {
+                false
+            }
+        })
         .on_submit(|s: &mut State, tx| s.send_draft(tx));
-    let can_send = !s.draft.text.trim().is_empty();
+    let attach = round_button("attach", &icons::PAPERCLIP, 36.0, false, p.muted, "Attach files").on_press_tx(|_: &mut State, tx| {
+        tx.open_files(rune::FileDialogOptions { title: "Attach files".into(), ..Default::default() }, |s: &mut State, res, _| match res {
+            Ok(Some(paths)) => s.attach_paths(&paths),
+            Ok(None) => {}
+            Err(e) => s.toast(format!("Couldn't open the file dialog: {e}")),
+        });
+    });
+    let ready = s.files.pending.iter().any(|p| matches!(p.state, crate::files::Up::Ready(_)));
+    let can_send = (!s.draft.text.trim().is_empty() || ready) && !s.uploads_busy();
     let send_btn = round_button("send", &icons::SEND, 36.0, can_send, p.faint, "Send").on_press_tx(|s: &mut State, tx| s.send_draft(tx));
     let field = row()
         .w_full()
@@ -422,6 +471,8 @@ fn composer(s: &State, m: &Model, ch: &Channel) -> El {
         .radius(10.0)
         .fill(p.surface)
         .border(1.0, p.line)
+        .pl(4.0)
+        .child(attach)
         .child(composer)
         .child(send_btn);
 
@@ -432,5 +483,5 @@ fn composer(s: &State, m: &Model, ch: &Channel) -> El {
         [a, b] => format!("{} and {} are typing…", m.name(*a), m.name(*b)),
         _ => "Several people are typing…".into(),
     };
-    bars.child(field).child(row().key("typing").w_full().h(22.0).px(6.0).center_y().child(text(typing).font(type_::LABEL).color(p.muted)))
+    bars.children(super::attachments::chips(s)).child(field).child(row().key("typing").w_full().h(22.0).px(6.0).center_y().child(text(typing).font(type_::LABEL).color(p.muted)))
 }

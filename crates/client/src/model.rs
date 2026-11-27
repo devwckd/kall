@@ -30,6 +30,8 @@ pub struct Model {
     pub avatar_asked: HashMap<Id, u32>,
     pub invites: Vec<Invite>,
     pub last_invite: Option<Invite>,
+    /// The server's file size limit and retention.
+    pub limits: kall_proto::files::FileLimits,
 }
 
 /// What the UI should react to after an event.
@@ -57,6 +59,7 @@ impl Model {
             avatar_asked: HashMap::new(),
             invites: vec![],
             last_invite: None,
+            limits: s.files,
         }
     }
 
