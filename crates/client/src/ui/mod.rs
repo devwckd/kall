@@ -3,6 +3,7 @@
 //! accent, dark and light themes following the system.
 
 pub mod audio_menu;
+pub mod avatar_crop;
 mod chat;
 mod login;
 mod members;

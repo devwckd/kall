@@ -93,6 +93,30 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
             set.avatar = Some((Vec::new(), fake_camera(128, 128)));
         }
     }),
+    ("avatar-crop", |s| {
+        load(s, 1);
+        crate::ui::settings::open(s, Tab::Profile);
+        // A drawn stand-in "photo": a warm gradient with a lighter disc off-centre.
+        let (w, h) = (600u32, 400u32);
+        let rgba = (0..h)
+            .flat_map(|y| {
+                (0..w).flat_map(move |x| {
+                    let t = (x + y) as f32 / (w + h) as f32;
+                    let (dx, dy) = (x as f32 - 380.0, y as f32 - 170.0);
+                    let disc = if dx * dx + dy * dy < 90.0 * 90.0 { 60.0 } else { 0.0 };
+                    [(70.0 + 150.0 * t + disc).min(255.0) as u8, (90.0 + 60.0 * t + disc).min(255.0) as u8, (150.0 - 80.0 * t + disc).min(255.0) as u8, 255]
+                })
+            })
+            .collect();
+        let mut crop = crate::ui::avatar_crop::Crop::new(w, h, rgba);
+        crop.zoom = 1.6;
+        crop.cx = 380.0;
+        crop.cy = 170.0;
+        crop.clamp();
+        if let Some(set) = &mut s.settings {
+            set.crop = Some(crop);
+        }
+    }),
     ("app-settings", |s| {
         load(s, 1);
         crate::ui::settings::open(s, Tab::App);

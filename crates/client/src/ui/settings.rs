@@ -27,6 +27,7 @@ pub fn open(s: &mut State, tab: Tab) {
         invite_uses: Some(1),
         invite_hours: Some(24 * 7),
         avatar: None,
+        crop: None,
     });
     if tab == Tab::Invites {
         s.send(C2S::ListInvites);
@@ -77,7 +78,7 @@ fn profile(m: &Model, set: &Settings) -> El {
         Some((_, px)) => el().key("avatar-new").size(80.0, 80.0).radius(40.0).clip_rounded(40.0).pixels(px),
         None => avatar(m, m.me, 80.0, false),
     };
-    let hint = if set.avatar.is_some() { "New avatar: press Save to use it." } else { "PNG, JPEG or WebP. It's cropped to a square." };
+    let hint = if set.avatar.is_some() { "New avatar: press Save to use it." } else { "PNG, JPEG or WebP. You can crop it next." };
     let mut actions = row().gap(8.0).child(button("avatar", "Change avatar", 0).on_press_tx(|_: &mut State, tx| {
         let opts = FileDialogOptions { title: "Choose an avatar".into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "webp"]);
         tx.open_file(opts, |s: &mut State, res, _| match res {
@@ -540,4 +541,5 @@ pub fn view(s: &State, m: &Model, set: &Settings) -> El {
         .center()
         .on_press(|s: &mut State| s.settings = None)
         .child(sheet.on_press(|_: &mut State| {}))
+        .children(set.crop.as_ref().map(super::avatar_crop::view))
 }

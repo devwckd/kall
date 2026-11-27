@@ -75,6 +75,8 @@ pub struct Settings {
     pub invite_hours: Option<u32>,
     /// A picked avatar not saved yet: the PNG to upload, and its picture for the preview.
     pub avatar: Option<(Vec<u8>, rune::Pixels)>,
+    /// A picked image being cropped (the crop dialog is open).
+    pub crop: Option<crate::ui::avatar_crop::Crop>,
 }
 
 pub struct State {
@@ -408,15 +410,10 @@ impl State {
                 self.voice_channel = None;
             }
             NetEvent::Notice(msg) => self.toast(msg),
-            NetEvent::AvatarPrepared(Err(e)) => self.toast(e),
-            NetEvent::AvatarPrepared(Ok(png)) => {
-                if let Some(set) = &mut self.settings
-                    && let Ok(img) = image::load_from_memory(&png)
-                {
-                    let rgba = img.to_rgba8();
-                    let px = rune::Pixels::new();
-                    px.set(rgba.width(), rgba.height(), rgba.into_raw());
-                    set.avatar = Some((png, px));
+            NetEvent::AvatarSource(Err(e)) => self.toast(e),
+            NetEvent::AvatarSource(Ok((w, h, rgba))) => {
+                if let Some(set) = &mut self.settings {
+                    set.crop = Some(crate::ui::avatar_crop::Crop::new(w, h, rgba));
                 }
             }
             NetEvent::Avatar { user, rev, size, rgba } => {
