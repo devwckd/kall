@@ -6,6 +6,15 @@ Each release's section here is also the top of its GitHub release notes.
 
 ### New
 - **Crop your avatar.** After picking an image, drag and zoom it in a round frame before saving. (#7, #21)
+- **Share files in chat.**
+  - Attach with the paperclip, paste a screenshot, or drag files onto the chat. Files show progress while uploading.
+  - Images show inline, with a full-size viewer.
+  - Video and audio play right in the chat (Windows and macOS).
+  - Other files get a card with Download, Open and Show in folder.
+  - Files can be up to 100 MB and are kept for 30 days. The server owner can change both with `KALL_MAX_FILE_MB` and `KALL_FILE_DAYS`. (#12)
+
+### Upgrading
+- **Update the server and the apps together.** Messages with attachments changed the protocol, so 0.2 apps are asked to update when they connect.
 
 ## v0.2.0
 

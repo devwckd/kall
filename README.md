@@ -142,6 +142,8 @@ To try two clients on one machine, give each its own profile so they keep separa
 | `--staging` | `KALL_ACME_STAGING=1` | use Let's Encrypt's staging CA |
 | `--no-ddns` | `KALL_DDNS=0` | don't update the A/AAAA record |
 | `--ipv6` | `KALL_DDNS_IPV6=1` | also publish an AAAA record |
+| | `KALL_MAX_FILE_MB` | largest file people can share, in MB (`100`) |
+| | `KALL_FILE_DAYS` | days shared files are kept before they expire; `0` keeps them (`30`) |
 
 ### Tests
 
