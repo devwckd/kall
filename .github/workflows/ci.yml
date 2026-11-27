@@ -40,7 +40,7 @@ jobs:
 
       - name: macOS build dependencies
         if: runner.os == 'macOS'
-        run: brew install nasm cmake
+        run: brew install nasm cmake pkgconf
 
       # Windows builds use FFmpeg for hardware video (NVENC, AMF, Quick Sync): BtbN's LGPL
       # shared build of the stable 9.0 branch. libclang (for the bindings) is preinstalled.
@@ -53,6 +53,23 @@ jobs:
           echo "FFMPEG_DIR=$PWD/ffmpeg/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0" >> "$GITHUB_ENV"
           echo "LIBCLANG_PATH=C:/Program Files/LLVM/bin" >> "$GITHUB_ENV"
           echo "KALL_FEATURES=--features ffmpeg" >> "$GITHUB_ENV"
+
+      # macOS and Linux link a small static FFmpeg built from source (VideoToolbox / NVENC),
+      # cached until scripts/build_ffmpeg.sh changes.
+      - name: Cache FFmpeg (macOS, Linux)
+        if: runner.os != 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg-static
+          key: ffmpeg-static-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/build_ffmpeg.sh') }}
+
+      - name: FFmpeg (macOS, Linux)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test -f ~/ffmpeg-static/lib/pkgconfig/libavcodec.pc || bash scripts/build_ffmpeg.sh ~/ffmpeg-static
+          echo "PKG_CONFIG_PATH=$HOME/ffmpeg-static/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "KALL_FEATURES=--features ffmpeg-static" >> "$GITHUB_ENV"
 
       - uses: dtolnay/rust-toolchain@master
         with:
