@@ -2,7 +2,7 @@
 
 Each release's section here is also the top of its GitHub release notes.
 
-## Unreleased
+## v0.3.1
 
 ### New
 - **Screen share on the GPU on macOS (VideoToolbox) and Linux (NVIDIA NVENC)**, like Windows got in 0.3.0. (#26)
