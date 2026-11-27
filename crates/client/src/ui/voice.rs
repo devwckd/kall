@@ -45,15 +45,6 @@ pub fn view(s: &State, m: &Model, ch: &Channel) -> El {
             Some(u) => stage(s, m, u, &people),
             None => grid(s, m, &people),
         };
-        let note = row()
-            .key("note")
-            .gap(8.0)
-            .px(12.0)
-            .h(30.0)
-            .center_y()
-            .radius(15.0)
-            .fill(p.ink(0.05))
-            .child(text(hint(s)).font(type_::LABEL).color(p.faint));
         col()
             .w_full()
             .grow(1.0)
@@ -63,7 +54,6 @@ pub fn view(s: &State, m: &Model, ch: &Channel) -> El {
             .gap(14.0)
             .center()
             .child(main)
-            .child(note)
             .child(controls(s, v))
     } else {
         lobby(m, ch, &people)
@@ -100,11 +90,8 @@ fn stage(s: &State, m: &Model, user: Id, people: &[&VoiceMember]) -> El {
         None => video = video.child(text("Waiting for the picture…").font(type_::BODY).color(p.faint)),
     }
     video = video.child(badge("LIVE", p.red).pin(Some(12.0), Some(12.0), None, None));
-    let action = if mine {
-        super::button("stop-share", "Stop sharing", 2).h(30.0).on_press(|s: &mut State| s.stop_share())
-    } else {
-        super::button("stop-watching", "Stop watching", 0).h(30.0).on_press(|s: &mut State| s.focus_stream(None))
-    };
+    // Stop watching lives on the sharer's tile below (where Watch stream was).
+    let action = mine.then(|| super::button("stop-share", "Stop sharing", 2).h(30.0).on_press(|s: &mut State| s.stop_share()));
     let mut strip = row().key("strip").w_full().h(110.0).gap(10.0).justify_center();
     for v in people {
         strip = strip.child(tile(s, m, v, 40.0).h_full().aspect_ratio(16.0 / 9.0));
@@ -115,7 +102,7 @@ fn stage(s: &State, m: &Model, user: Id, people: &[&VoiceMember]) -> El {
         .grow(1.0)
         .min_h(0.0)
         .gap(10.0)
-        .child(row().w_full().gap(10.0).center_y().child(text(title).font(type_::TITLE).color(p.text).grow(1.0).truncate()).child(action))
+        .child(row().w_full().h(30.0).gap(10.0).center_y().child(text(title).font(type_::TITLE).color(p.text).grow(1.0).truncate()).children(action))
         .child(video)
         .child(strip)
 }
@@ -211,14 +198,12 @@ fn controls(s: &State, v: &VoiceMember) -> El {
         .child(call_button("leave", &icons::PHONE_OFF, Tone::Danger, "Disconnect").on_press(|s: &mut State| s.leave_voice()))
 }
 
-fn hint(s: &State) -> String {
-    match s.voice.mode {
-        crate::voice::core::Mode::PushToTalk => {
-            let key = crate::voice::PTT_KEYS.iter().find(|(k, _)| *k == s.voice.ptt_key).map_or(s.voice.ptt_key.as_str(), |(_, n)| n);
-            format!("Push to talk: hold {key}")
-        }
-        _ => "Voice activity: just talk".into(),
-    }
+/// "Push to talk: hold Left Alt", when push-to-talk is on.
+pub fn ptt_hint(s: &State) -> Option<String> {
+    (s.voice.mode == crate::voice::core::Mode::PushToTalk).then(|| {
+        let key = crate::voice::PTT_KEYS.iter().find(|(k, _)| *k == s.voice.ptt_key).map_or(s.voice.ptt_key.as_str(), |(_, n)| n);
+        format!("Push to talk: hold {key}")
+    })
 }
 
 /// −  100%  + on a friend's tile while hovered.
@@ -290,7 +275,9 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
         if let Some(px) = cam {
             t = t.child(el().key("cam").w(112.0).h(63.0).radius(8.0).clip_rounded(8.0).border(1.5, oklcha(1.0, 0.0, 0.0, 0.25)).pixels_fit(&px, SurfaceFit::Fill).pin(Some(10.0), Some(10.0), None, None));
         }
-        let cta = if u == m.me { "You're sharing" } else { "Watch stream" };
+        // Watching it already: the same button stops watching.
+        let watching = u != m.me && s.media.focus == Some(u);
+        let cta = if u == m.me { "You're sharing" } else if watching { "Stop watching" } else { "Watch stream" };
         let pill = row()
             .key("watch")
             .gap(8.0)
@@ -298,16 +285,16 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
             .px(14.0)
             .h(36.0)
             .radius(18.0)
-            .fill(if u == m.me { oklcha(0.1, 0.0, 0.0, 0.6) } else { p.accent })
-            .child(glyph(&icons::SCREEN, 16.0, if u == m.me { oklch(0.97, 0.0, 0.0) } else { p.on_accent }))
-            .child(text(cta).font(type_::TITLE).color(if u == m.me { oklch(0.97, 0.0, 0.0) } else { p.on_accent }));
+            .fill(if u == m.me || watching { oklcha(0.1, 0.0, 0.0, 0.6) } else { p.accent })
+            .child(glyph(if watching { &icons::X } else { &icons::SCREEN }, 16.0, if u == m.me || watching { oklch(0.97, 0.0, 0.0) } else { p.on_accent }))
+            .child(text(cta).font(type_::TITLE).color(if u == m.me || watching { oklch(0.97, 0.0, 0.0) } else { p.on_accent }));
         t = t
             .child(row().key("watch-row").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(pill))
             .child(badge("LIVE", p.red).pin(None, None, Some(10.0), Some(10.0)))
             .role("button")
-            .label(format!("Watch {}'s screen", m.name(u)))
+            .label(if watching { format!("Stop watching {}'s screen", m.name(u)) } else { format!("Watch {}'s screen", m.name(u)) })
             .hover_border(p.ink(0.3))
-            .on_press(move |s: &mut State| s.focus_stream(Some(u)));
+            .on_press(move |s: &mut State| s.focus_stream(if watching { None } else { Some(u) }));
     } else {
         t = match cam {
             Some(px) => t.fill(oklch(0.08, 0.0, 0.0)).child(el().key("cam").pin(Some(inset), Some(inset), Some(inset), Some(inset)).radius(12.0).clip_rounded(12.0).pixels_fit(&px, SurfaceFit::Fill)),
