@@ -25,8 +25,8 @@ pub enum Auth {
 pub enum NetCmd {
     Connect { server: String, auth: Auth },
     Send(C2S),
-    /// Crop and convert a picked image for the avatar; answered with `AvatarPrepared`. It's
-    /// only uploaded when the profile is saved.
+    /// Load a picked image for the avatar crop view; answered with `AvatarSource`. The cropped
+    /// result is only uploaded when the profile is saved.
     PrepareAvatar(PathBuf),
     /// Forget the pinned certificate for a server (after it was legitimately replaced).
     ForgetPin(String),
@@ -43,8 +43,9 @@ pub enum NetEvent {
     LoggedOut { reason: Option<String>, pin_mismatch: bool },
     Disconnected { retry_in: u64 },
     Notice(String),
-    /// The picked avatar as the PNG the server takes, or why it couldn't be used.
-    AvatarPrepared(Result<Vec<u8>, String>),
+    /// The picked avatar image (width, height, RGBA; at most 1024 px a side), or why it
+    /// couldn't be used.
+    AvatarSource(Result<(u32, u32, Vec<u8>), String>),
 }
 
 pub struct Net {
@@ -342,8 +343,8 @@ async fn session(
                     }
                 }
                 Some(NetCmd::PrepareAvatar(path)) => {
-                    let r = tokio::task::spawn_blocking(move || avatar_png(&path)).await?;
-                    ev.emit(NetEvent::AvatarPrepared(r.map_err(|e| format!("Couldn't use that image: {e}"))));
+                    let r = tokio::task::spawn_blocking(move || avatar_source(&path)).await?;
+                    ev.emit(NetEvent::AvatarSource(r.map_err(|e| format!("Couldn't use that image: {e}"))));
                 }
                 Some(NetCmd::Logout) => {
                     kall_proto::send(&mut send, &C2S::Logout).await.ok();
@@ -363,27 +364,31 @@ async fn session(
 }
 
 /// Any image → a 128×128 centre-cropped PNG.
-fn avatar_png(path: &PathBuf) -> Result<Vec<u8>> {
-    let img = image::open(path)?;
-    let img = img.resize_to_fill(128, 128, image::imageops::FilterType::Lanczos3);
-    let mut out = std::io::Cursor::new(Vec::new());
-    img.write_to(&mut out, image::ImageFormat::Png)?;
-    Ok(out.into_inner())
+/// A picked image, scaled down to at most 1024 px a side (plenty to crop a 128 px avatar from).
+fn avatar_source(path: &PathBuf) -> Result<(u32, u32, Vec<u8>)> {
+    let mut img = image::open(path)?;
+    if img.width().max(img.height()) > 1024 {
+        img = img.resize(1024, 1024, image::imageops::FilterType::Triangle);
+    }
+    let rgba = img.to_rgba8();
+    Ok((rgba.width(), rgba.height(), rgba.into_raw()))
 }
 
 #[cfg(test)]
 mod avatar_tests {
-    /// What "Change avatar" does with the picked file: PNG, JPEG and WebP of any shape become a
-    /// 128×128 PNG the server accepts.
+    /// What "Change avatar" does with the picked file: PNG, JPEG and WebP of any shape load
+    /// (big ones scaled down), and the crop view turns them into a 128×128 PNG the server takes.
     #[test]
     fn avatars_become_small_square_pngs() {
         let dir = std::env::temp_dir().join(format!("kall-avatar-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let img = image::RgbImage::from_fn(300, 180, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
+        let img = image::RgbImage::from_fn(1500, 900, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
         for ext in ["png", "jpg", "webp"] {
             let path = dir.join(format!("pic.{ext}"));
             image::DynamicImage::ImageRgb8(img.clone()).save(&path).unwrap();
-            let png = super::avatar_png(&path).unwrap();
+            let (w, h, rgba) = super::avatar_source(&path).unwrap();
+            assert_eq!((w, h), (1024, 614), "{ext}: scaled to fit 1024");
+            let png = crate::ui::avatar_crop::Crop::new(w, h, rgba).png().unwrap();
             assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() <= kall_proto::MAX_AVATAR_BYTES, "{ext}");
             let back = image::load_from_memory(&png).unwrap();
             assert_eq!((back.width(), back.height()), (128, 128), "{ext}");
