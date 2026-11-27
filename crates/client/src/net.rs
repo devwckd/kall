@@ -25,7 +25,9 @@ pub enum Auth {
 pub enum NetCmd {
     Connect { server: String, auth: Auth },
     Send(C2S),
-    UploadAvatar(PathBuf),
+    /// Crop and convert a picked image for the avatar; answered with `AvatarPrepared`. It's
+    /// only uploaded when the profile is saved.
+    PrepareAvatar(PathBuf),
     /// Forget the pinned certificate for a server (after it was legitimately replaced).
     ForgetPin(String),
     Logout,
@@ -41,6 +43,8 @@ pub enum NetEvent {
     LoggedOut { reason: Option<String>, pin_mismatch: bool },
     Disconnected { retry_in: u64 },
     Notice(String),
+    /// The picked avatar as the PNG the server takes, or why it couldn't be used.
+    AvatarPrepared(Result<Vec<u8>, String>),
 }
 
 pub struct Net {
@@ -337,11 +341,9 @@ async fn session(
                         break End::Lost;
                     }
                 }
-                Some(NetCmd::UploadAvatar(path)) => {
-                    match tokio::task::spawn_blocking(move || avatar_png(&path)).await? {
-                        Ok(png) => { kall_proto::send(&mut send, &C2S::SetAvatar { png }).await.ok(); }
-                        Err(e) => ev.emit(NetEvent::Notice(format!("Couldn't use that image: {e}"))),
-                    }
+                Some(NetCmd::PrepareAvatar(path)) => {
+                    let r = tokio::task::spawn_blocking(move || avatar_png(&path)).await?;
+                    ev.emit(NetEvent::AvatarPrepared(r.map_err(|e| format!("Couldn't use that image: {e}"))));
                 }
                 Some(NetCmd::Logout) => {
                     kall_proto::send(&mut send, &C2S::Logout).await.ok();
@@ -367,4 +369,25 @@ fn avatar_png(path: &PathBuf) -> Result<Vec<u8>> {
     let mut out = std::io::Cursor::new(Vec::new());
     img.write_to(&mut out, image::ImageFormat::Png)?;
     Ok(out.into_inner())
+}
+
+#[cfg(test)]
+mod avatar_tests {
+    /// What "Change avatar" does with the picked file: PNG, JPEG and WebP of any shape become a
+    /// 128×128 PNG the server accepts.
+    #[test]
+    fn avatars_become_small_square_pngs() {
+        let dir = std::env::temp_dir().join(format!("kall-avatar-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let img = image::RgbImage::from_fn(300, 180, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 128]));
+        for ext in ["png", "jpg", "webp"] {
+            let path = dir.join(format!("pic.{ext}"));
+            image::DynamicImage::ImageRgb8(img.clone()).save(&path).unwrap();
+            let png = super::avatar_png(&path).unwrap();
+            assert!(png.starts_with(b"\x89PNG\r\n\x1a\n") && png.len() <= kall_proto::MAX_AVATAR_BYTES, "{ext}");
+            let back = image::load_from_memory(&png).unwrap();
+            assert_eq!((back.width(), back.height()), (128, 128), "{ext}");
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
 }

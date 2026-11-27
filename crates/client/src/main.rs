@@ -73,6 +73,8 @@ pub struct Settings {
     pub confirm_delete: Option<Id>,
     pub invite_uses: Option<u32>,
     pub invite_hours: Option<u32>,
+    /// A picked avatar not saved yet: the PNG to upload, and its picture for the preview.
+    pub avatar: Option<(Vec<u8>, rune::Pixels)>,
 }
 
 pub struct State {
@@ -403,6 +405,17 @@ impl State {
                 self.voice_channel = None;
             }
             NetEvent::Notice(msg) => self.toast(msg),
+            NetEvent::AvatarPrepared(Err(e)) => self.toast(e),
+            NetEvent::AvatarPrepared(Ok(png)) => {
+                if let Some(set) = &mut self.settings
+                    && let Ok(img) = image::load_from_memory(&png)
+                {
+                    let rgba = img.to_rgba8();
+                    let px = rune::Pixels::new();
+                    px.set(rgba.width(), rgba.height(), rgba.into_raw());
+                    set.avatar = Some((png, px));
+                }
+            }
             NetEvent::Avatar { user, rev, size, rgba } => {
                 if let Some(m) = &mut self.m {
                     let px = rune::Pixels::new();
