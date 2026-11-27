@@ -5,6 +5,7 @@ use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
 use anyhow::{Context, Result, bail};
+use kall_proto::files::{Attachment, FileKind};
 use kall_proto::{Channel, ChannelKind, Id, Invite, Message, Millis, Preview, ReadState, Role, Status, User};
 use rusqlite::{Connection, OptionalExtension, params};
 
@@ -60,6 +61,20 @@ CREATE TABLE IF NOT EXISTS messages (
     preview BLOB
 );
 CREATE INDEX IF NOT EXISTS messages_by_channel ON messages(channel, id);
+CREATE TABLE IF NOT EXISTS files (
+    id INTEGER PRIMARY KEY,
+    owner INTEGER NOT NULL,
+    message INTEGER,
+    name TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    width INTEGER NOT NULL DEFAULT 0,
+    height INTEGER NOT NULL DEFAULT 0,
+    thumb INTEGER NOT NULL DEFAULT 0,
+    created INTEGER NOT NULL,
+    expired INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS files_by_message ON files(message);
 CREATE TABLE IF NOT EXISTS read_state (
     user INTEGER NOT NULL,
     channel INTEGER NOT NULL,
@@ -342,12 +357,17 @@ impl Db {
         Ok(ids)
     }
 
-    pub fn delete_channel(&self, id: Id) -> Result<()> {
+    /// Deletes the channel and its messages; returns the ids of the files that went with them
+    /// (to remove from disk).
+    pub fn delete_channel(&self, id: Id) -> Result<Vec<Id>> {
         let c = self.c();
+        let mut st = c.prepare("DELETE FROM files WHERE message IN (SELECT id FROM messages WHERE channel = ?1) RETURNING id")?;
+        let files: Vec<Id> = st.query_map([id], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        drop(st);
         c.execute("DELETE FROM messages WHERE channel = ?1", [id])?;
         c.execute("DELETE FROM read_state WHERE channel = ?1", [id])?;
         c.execute("DELETE FROM channels WHERE id = ?1", [id])?;
-        Ok(())
+        Ok(files)
     }
 
     // ---- messages ----
@@ -363,7 +383,19 @@ impl Db {
             created: r.get(5)?,
             edited: r.get(6)?,
             preview: preview.and_then(|b| postcard::from_bytes::<Preview>(&b).ok()),
+            attachments: Vec::new(),
         })
+    }
+
+    /// Fill in a message's attachments.
+    fn with_files(c: &Connection, mut m: Message) -> Result<Message> {
+        m.attachments = Self::files_of(c, m.id)?;
+        Ok(m)
+    }
+
+    fn files_of(c: &Connection, message: Id) -> Result<Vec<Attachment>> {
+        let mut st = c.prepare(&format!("SELECT {} FROM files WHERE message = ?1 ORDER BY id", Self::FILE_COLS))?;
+        Ok(st.query_map([message], Self::file_row)?.collect::<Result<_, _>>()?)
     }
 
     const MSG_COLS: &str = "id, channel, author, body, reply_to, created, edited, preview";
@@ -375,12 +407,16 @@ impl Db {
             "INSERT INTO messages (channel, author, body, reply_to, created) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![channel, author, body, reply_to, created],
         )?;
-        Ok(Message { id: c.last_insert_rowid(), channel, author, body: body.into(), reply_to, created, edited: None, preview: None })
+        Ok(Message { id: c.last_insert_rowid(), channel, author, body: body.into(), reply_to, created, edited: None, preview: None, attachments: Vec::new() })
     }
 
     pub fn message(&self, id: Id) -> Result<Option<Message>> {
         let sql = format!("SELECT {} FROM messages WHERE id = ?1 AND deleted = 0", Self::MSG_COLS);
-        Ok(self.c().query_row(&sql, [id], Self::message_row).optional()?)
+        let c = self.c();
+        match c.query_row(&sql, [id], Self::message_row).optional()? {
+            Some(m) => Ok(Some(Self::with_files(&c, m)?)),
+            None => Ok(None),
+        }
     }
 
     pub fn edit_message(&self, id: Id, body: &str) -> Result<()> {
@@ -399,6 +435,88 @@ impl Db {
         Ok(())
     }
 
+    // ---- files ----
+
+    const FILE_COLS: &str = "id, name, size, kind, width, height, thumb, expired";
+
+    fn file_row(r: &rusqlite::Row) -> rusqlite::Result<Attachment> {
+        let kind = match r.get::<_, i64>(3)? {
+            0 => FileKind::Image,
+            1 => FileKind::Video,
+            2 => FileKind::Audio,
+            _ => FileKind::Other,
+        };
+        Ok(Attachment {
+            id: r.get(0)?,
+            name: r.get(1)?,
+            size: r.get::<_, i64>(2)? as u64,
+            kind,
+            width: r.get(4)?,
+            height: r.get(5)?,
+            thumb: r.get::<_, i64>(6)? != 0,
+            expired: r.get::<_, i64>(7)? != 0,
+        })
+    }
+
+    /// A finished upload, not yet in any message.
+    pub fn add_file(&self, owner: Id, name: &str, size: u64, kind: FileKind, width: u32, height: u32, thumb: bool) -> Result<Attachment> {
+        let k = match kind {
+            FileKind::Image => 0,
+            FileKind::Video => 1,
+            FileKind::Audio => 2,
+            FileKind::Other => 3,
+        };
+        let c = self.c();
+        c.execute(
+            "INSERT INTO files (owner, name, size, kind, width, height, thumb, created) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![owner, name, size as i64, k, width, height, thumb as i64, now()],
+        )?;
+        Ok(Attachment { id: c.last_insert_rowid(), name: name.into(), size, kind, width, height, thumb, expired: false })
+    }
+
+    /// Put `owner`'s unattached uploads `files` on `message`; anything else in the list is
+    /// refused.
+    pub fn attach_files(&self, message: Id, owner: Id, files: &[Id]) -> Result<()> {
+        let c = self.c();
+        for &f in files {
+            let n = c.execute("UPDATE files SET message = ?1 WHERE id = ?2 AND owner = ?3 AND message IS NULL AND expired = 0", params![message, f, owner])?;
+            if n == 0 {
+                bail!("That file isn't yours to send (or it was already sent).");
+            }
+        }
+        Ok(())
+    }
+
+    /// The file, its uploader and the message it's in (if sent), for a download.
+    pub fn file(&self, id: Id) -> Result<Option<(Attachment, Id, Option<Id>)>> {
+        let sql = format!("SELECT {}, owner, message FROM files WHERE id = ?1", Self::FILE_COLS);
+        Ok(self.c().query_row(&sql, [id], |r| Ok((Self::file_row(r)?, r.get(8)?, r.get(9)?))).optional()?)
+    }
+
+    /// Forget a message's files; returns their ids (to remove from disk).
+    pub fn remove_message_files(&self, message: Id) -> Result<Vec<Id>> {
+        let c = self.c();
+        let mut st = c.prepare("DELETE FROM files WHERE message = ?1 RETURNING id")?;
+        let ids = st.query_map([message], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        Ok(ids)
+    }
+
+    /// Mark sent files uploaded before `before` as expired; returns (file, message) pairs.
+    pub fn expire_files(&self, before: Millis) -> Result<Vec<(Id, Id)>> {
+        let c = self.c();
+        let mut st = c.prepare("UPDATE files SET expired = 1 WHERE expired = 0 AND message IS NOT NULL AND created < ?1 RETURNING id, message")?;
+        let out = st.query_map([before], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?;
+        Ok(out)
+    }
+
+    /// Forget uploads that never made it into a message, made before `before`.
+    pub fn drop_unsent_files(&self, before: Millis) -> Result<Vec<Id>> {
+        let c = self.c();
+        let mut st = c.prepare("DELETE FROM files WHERE message IS NULL AND created < ?1 RETURNING id")?;
+        let out = st.query_map([before], |r| r.get(0))?.collect::<Result<_, _>>()?;
+        Ok(out)
+    }
+
     pub fn history(&self, channel: Id, before: Option<Id>, limit: u32) -> Result<(Vec<Message>, bool)> {
         let limit = limit.clamp(1, 200);
         let c = self.c();
@@ -413,6 +531,8 @@ impl Db {
         let complete = msgs.len() <= limit as usize;
         msgs.truncate(limit as usize);
         msgs.reverse();
+        drop(st);
+        let msgs = msgs.into_iter().map(|m| Self::with_files(&c, m)).collect::<Result<_>>()?;
         Ok((msgs, complete))
     }
 

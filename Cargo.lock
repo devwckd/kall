@@ -3045,6 +3045,7 @@ dependencies = [
  "argon2",
  "bytes",
  "hex",
+ "image",
  "instant-acme",
  "kall-proto",
  "postcard",

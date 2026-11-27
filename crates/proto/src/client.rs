@@ -138,3 +138,72 @@ pub async fn connect(addr: &str, pin: Option<String>) -> Result<Connected> {
     let seen = seen.lock().unwrap().clone();
     Ok(Connected { endpoint, conn, send, recv, fingerprint: seen.fingerprint.unwrap_or_default(), ca_verified: seen.ca_verified })
 }
+
+// ---- file transfers (see `crate::files`) ----
+
+/// Upload `size` bytes from `src` as a file named `name`, on a stream of its own. `progress`
+/// gets the bytes sent so far. Dropping the future cancels the upload.
+pub async fn upload<R: tokio::io::AsyncRead + Unpin>(
+    conn: &quinn::Connection,
+    name: &str,
+    size: u64,
+    mut src: R,
+    mut progress: impl FnMut(u64),
+) -> Result<crate::files::Attachment> {
+    use crate::files::{Transfer, TransferReply};
+    use tokio::io::AsyncReadExt;
+    let (mut send, mut recv) = conn.open_bi().await?;
+    crate::send(&mut send, &Transfer::Upload { name: name.into(), size }).await?;
+    match crate::recv::<TransferReply>(&mut recv).await? {
+        Some(TransferReply::Go) => {}
+        Some(TransferReply::Error(e)) => return Err(anyhow!(e)),
+        other => return Err(anyhow!("unexpected reply: {other:?}")),
+    }
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut sent = 0u64;
+    loop {
+        let n = src.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        send.write_all(&buf[..n]).await?;
+        sent += n as u64;
+        progress(sent);
+    }
+    send.finish()?;
+    match crate::recv::<TransferReply>(&mut recv).await? {
+        Some(TransferReply::Stored(a)) => Ok(a),
+        Some(TransferReply::Error(e)) => Err(anyhow!(e)),
+        other => Err(anyhow!("unexpected reply: {other:?}")),
+    }
+}
+
+/// Download a file (or its preview, `thumb`) into `dst`. `progress` gets (received, total).
+/// Returns the size. Dropping the future cancels the download.
+pub async fn download<W: tokio::io::AsyncWrite + Unpin>(
+    conn: &quinn::Connection,
+    file: crate::Id,
+    thumb: bool,
+    mut dst: W,
+    mut progress: impl FnMut(u64, u64),
+) -> Result<u64> {
+    use crate::files::{Transfer, TransferReply};
+    use tokio::io::AsyncWriteExt;
+    let (mut send, mut recv) = conn.open_bi().await?;
+    crate::send(&mut send, &Transfer::Download { file, thumb }).await?;
+    send.finish()?;
+    let size = match crate::recv::<TransferReply>(&mut recv).await? {
+        Some(TransferReply::Size(n)) => n,
+        Some(TransferReply::Error(e)) => return Err(anyhow!(e)),
+        other => return Err(anyhow!("unexpected reply: {other:?}")),
+    };
+    let mut got = 0u64;
+    while let Some(chunk) = recv.read_chunk(64 * 1024, true).await? {
+        dst.write_all(&chunk.bytes).await?;
+        got += chunk.bytes.len() as u64;
+        progress(got, size);
+    }
+    dst.flush().await?;
+    anyhow::ensure!(got == size, "the download stopped early");
+    Ok(size)
+}

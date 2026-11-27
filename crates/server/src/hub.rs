@@ -72,6 +72,7 @@ impl Live {
 pub struct Hub {
     pub db: Db,
     pub name: String,
+    pub files: crate::files::FileStore,
     http: reqwest::Client,
     live: Mutex<Live>,
     next_conn: AtomicU64,
@@ -122,8 +123,8 @@ fn channel_name(kind: ChannelKind, raw: &str) -> Result<String> {
 }
 
 impl Hub {
-    pub fn new(db: Db, name: String) -> Hub {
-        Hub { db, name, http: preview::client(), live: Mutex::new(Live::default()), next_conn: AtomicU64::new(1) }
+    pub fn new(db: Db, name: String, files: crate::files::FileStore) -> Hub {
+        Hub { db, name, files, http: preview::client(), live: Mutex::new(Live::default()), next_conn: AtomicU64::new(1) }
     }
 
     fn live(&self) -> std::sync::MutexGuard<'_, Live> {
@@ -178,7 +179,7 @@ impl Hub {
             let live = self.live();
             (live.voice.values().cloned().collect(), live.streams.iter().map(|((u, _), i)| (*u, i.clone())).collect())
         };
-        Ok(Snapshot { server_name: self.name.clone(), me: me.id, users, channels, read, voice, streams })
+        Ok(Snapshot { server_name: self.name.clone(), me: me.id, users, channels, read, voice, streams, files: self.files.limits })
     }
 
     /// Check the first frame; on success returns (user, username, token).
@@ -367,14 +368,17 @@ impl Hub {
                 me.tx.send(Out::Close).ok();
             }
 
-            C2S::SendMessage { channel, body, reply_to } => {
+            C2S::SendMessage { channel, body, reply_to, attachments } => {
                 let body = body.trim().to_string();
-                if body.is_empty() || body.chars().count() > MAX_MESSAGE_LEN {
+                if (body.is_empty() && attachments.is_empty()) || body.chars().count() > MAX_MESSAGE_LEN {
                     bail!("Messages are 1–{MAX_MESSAGE_LEN} characters.");
                 }
                 let ch = self.text_channel(channel)?;
+                self.check_attachments(me.id, &attachments)?;
                 let reply_to = reply_to.filter(|&r| self.db.message(r).ok().flatten().is_some_and(|m| m.channel == ch.id));
                 let msg = self.db.insert_message(ch.id, me.id, &body, reply_to)?;
+                self.db.attach_files(msg.id, me.id, &attachments)?;
+                let msg = self.db.message(msg.id)?.unwrap_or(msg);
                 self.db.mark_read(me.id, ch.id, msg.id)?;
                 self.broadcast(S2C::MessageCreated(msg.clone()));
                 self.spawn_preview(msg.id, &body);
@@ -403,6 +407,8 @@ impl Hub {
                     }
                 }
                 self.db.delete_message(id)?;
+                let files = self.db.remove_message_files(id)?;
+                self.files.remove(&files);
                 self.broadcast(S2C::MessageDeleted { channel: msg.channel, id });
             }
             C2S::LoadHistory { channel, before, limit } => {
@@ -468,7 +474,8 @@ impl Hub {
                 for (user, ended) in kicked {
                     self.announce_left(user, ended);
                 }
-                self.db.delete_channel(id)?;
+                let files = self.db.delete_channel(id)?;
+                self.files.remove(&files);
                 self.broadcast(S2C::ChannelDeleted { id });
             }
             C2S::CreateInvite { uses, hours } => {
@@ -690,6 +697,20 @@ pub async fn serve(hub: Arc<Hub>, incoming: quinn::Incoming) -> Result<()> {
         hub.announce_online(id);
     }
 
+    // Every stream after the control stream is a file transfer.
+    let tr_hub = hub.clone();
+    let tr_conn = conn.clone();
+    let transfers = tokio::spawn(async move {
+        while let Ok((s, r)) = tr_conn.accept_bi().await {
+            let hub = tr_hub.clone();
+            tokio::spawn(async move {
+                if let Err(e) = hub.transfer(id, s, r).await {
+                    tracing::debug!("transfer: {e:#}");
+                }
+            });
+        }
+    });
+
     let voice_hub = hub.clone();
     let voice_conn = conn.clone();
     let voice = tokio::spawn(async move {
@@ -733,6 +754,7 @@ pub async fn serve(hub: Arc<Hub>, incoming: quinn::Incoming) -> Result<()> {
     hub.detach(me.id, me.conn);
     writer.abort();
     voice.abort();
+    transfers.abort();
     tracing::info!("{remote}: {} disconnected", me.username);
     if let Err(e) = result
         && !matches!(e.downcast_ref::<quinn::ReadExactError>(), Some(quinn::ReadExactError::ReadError(quinn::ReadError::ConnectionLost(_))))
