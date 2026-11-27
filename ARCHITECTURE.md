@@ -81,8 +81,10 @@ handles them in `poll`.
     - Webcam: `nokhwa`.
   - **System audio:** WASAPI process loopback on Windows, which excludes kall's own output so
     friends don't hear themselves.
-  - **Codec:** H.264 through OpenH264, on the CPU. It encodes sliced and multithreaded, at
-    about 8 ms per 1080p frame on a modern desktop CPU.
+  - **Codec:** H.264. With the `ffmpeg` feature (Windows release builds), encoding runs on the
+    GPU through FFmpeg (NVENC, AMF or Quick Sync, whichever opens first) and decoding uses
+    FFmpeg's decoder. Otherwise, or if no GPU encoder opens, OpenH264 on the CPU. Both produce
+    the same Annex-B stream, and `KALL_SOFTWARE_VIDEO=1` forces OpenH264.
 - **Desktop:** OS notifications (`rune-notify`), a tray icon with an unread badge, close to
   tray, optional start at login (`auto-launch`) and sound cues.
 - **Updates:** official builds read `latest.json` from the GitHub release. They install the
@@ -90,7 +92,8 @@ handles them in `poll`.
 
 ## Ideas not built yet
 
-- Hardware video encoding (NVENC, AMF, QSV, VideoToolbox, VAAPI) and AV1.
+- Hardware video on macOS (VideoToolbox) and Linux (VAAPI), which needs FFmpeg bundled with
+  those installers; GPU decoding; AV1.
 - Direct messages and file uploads in chat.
 - Native capture APIs on macOS (ScreenCaptureKit) and Linux (PipeWire portal), and system
   audio there.

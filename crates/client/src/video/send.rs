@@ -161,7 +161,8 @@ fn run(kind: StreamKind, q: Quality, link: &VoiceLink, stop: &AtomicBool, slot: 
             let secs = stat_t.elapsed().as_secs_f64();
             let n = n_in.max(1) as f64;
             eprintln!(
-                "kall video send {kind:?}: {:.1} fps in, {:.1} fps out, {w}x{h}, scale {:.1} ms, encode {:.1} ms (yuv {:.1}, h264 {:.1}, send {:.1}), {:.0} kbit/s",
+                "kall video send {kind:?} ({}): {:.1} fps in, {:.1} fps out, {w}x{h}, scale {:.1} ms, encode {:.1} ms (yuv {:.1}, h264 {:.1}, send {:.1}), {:.0} kbit/s",
+                enc.backend(),
                 n_in as f64 / secs,
                 n_out as f64 / secs,
                 t_scale / n * 1e3,

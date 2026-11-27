@@ -12,6 +12,7 @@ Each release's section here is also the top of its GitHub release notes.
   - Video and audio play right in the chat (Windows and macOS).
   - Other files get a card with Download, Open and Show in folder.
   - Files can be up to 100 MB and are kept for 30 days. The server owner can change both with `KALL_MAX_FILE_MB` and `KALL_FILE_DAYS`. (#12)
+- **Screen share on the GPU (Windows).** Sharing your screen or camera encodes on the graphics card (NVIDIA NVENC, AMD AMF or Intel Quick Sync) through FFmpeg, with the CPU as fallback. Watching uses FFmpeg's faster decoder. Much lighter while gaming. (#11)
 
 ### Upgrading
 - **Update the server and the apps together.** Messages with attachments changed the protocol, so 0.2 apps are asked to update when they connect.

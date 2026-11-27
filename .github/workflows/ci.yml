@@ -42,6 +42,18 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install nasm cmake
 
+      # Windows builds use FFmpeg for hardware video (NVENC, AMF, Quick Sync): BtbN's LGPL
+      # shared build of the stable 9.0 branch. libclang (for the bindings) is preinstalled.
+      - name: FFmpeg (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          curl -sSL -o ffmpeg.zip "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0.zip"
+          7z x -y -offmpeg ffmpeg.zip > /dev/null
+          echo "FFMPEG_DIR=$PWD/ffmpeg/ffmpeg-n9.0-latest-win64-lgpl-shared-9.0" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=C:/Program Files/LLVM/bin" >> "$GITHUB_ENV"
+          echo "KALL_FEATURES=--features ffmpeg" >> "$GITHUB_ENV"
+
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: "1.99.1"
@@ -51,7 +63,8 @@ jobs:
           shared-key: client
 
       - name: Build
-        run: cargo build --release -p kall
+        shell: bash
+        run: cargo build --release -p kall $KALL_FEATURES
 
       # So the cached ~/.cargo/bin has it and releases don't compile it again.
       - name: Install cargo-packager
