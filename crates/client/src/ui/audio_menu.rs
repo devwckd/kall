@@ -75,6 +75,8 @@ pub fn layer(s: &State) -> Option<El> {
         Side::Output => (v.as_ref().is_some_and(|v| v.deafened), "Deafen"),
     };
     let mut header = row().w_full().center_y().gap(8.0).child(text(title).font(type_::TITLE).color(p.text).grow(1.0));
+    // Push-to-talk users see their key here (the call view no longer shows it).
+    let ptt = (side == Side::Input).then(|| super::voice::ptt_hint(s)).flatten();
     if let Some(v) = v.clone() {
         let knob = el().size(16.0, 16.0).radius(8.0).fill(rune::oklch(0.98, 0.0, 0.0)).absolute(if on { 18.0 } else { 2.0 }, 2.0).motion(super::SOFT);
         header = header.child(
@@ -197,6 +199,7 @@ pub fn layer(s: &State) -> Option<El> {
         .shadow(8.0, 28.0, rune::oklcha(0.0, 0.0, 0.0, if p.dark { 0.45 } else { 0.18 }))
         .transition(rune::Transition::offset(0.0, 6.0).combined(rune::Transition::opacity()))
         .child(header)
+        .children(ptt.map(|h| text(h).font(type_::LABEL).color(p.accent2)))
         .child(label(if side == Side::Input { "INPUT DEVICE" } else { "OUTPUT DEVICE" }))
         .child(devices)
         .child(label("VOLUME").pt(2.0))

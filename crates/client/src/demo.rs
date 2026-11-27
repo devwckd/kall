@@ -50,6 +50,14 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.toast = Some(("Mira started sharing Visual Studio Code".into(), 1e9));
         s.toast_watch = Some(2);
     }),
+    ("stream-watching", |s| {
+        // Watching Mira's share on the stage: her tile in the strip offers Stop watching.
+        let stream = SCENES.iter().find(|(n, _)| *n == "stream").unwrap().1;
+        stream(s);
+        s.toast = None;
+        s.toast_watch = None;
+        s.media.focus = Some(2);
+    }),
     ("share-screens", |s| share_picker(s, crate::video::capture::SourceKind::Display)),
     ("share-windows", |s| share_picker(s, crate::video::capture::SourceKind::Window)),
     ("mic-menu", |s| {
