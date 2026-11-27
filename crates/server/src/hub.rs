@@ -314,7 +314,8 @@ impl Hub {
         self.broadcast(S2C::VoiceUpdated { user, state: None });
     }
 
-    /// Forward one video fragment to everyone watching that stream (in the same channel).
+    /// Forward one video fragment to everyone watching that stream (in the same channel), or a
+    /// preview fragment to everyone else in the channel.
     pub fn relay_video(&self, from: Id, conn: u64, data: &[u8]) {
         let Some(up) = kall_proto::video::decode_up(data) else { return };
         let live = self.live();
@@ -322,8 +323,19 @@ impl Hub {
             return;
         }
         let Some(channel) = live.voice.get(&from).map(|v| v.channel) else { return };
-        let Some(watchers) = live.watchers.get(&(from, up.kind)) else { return };
         let packet = bytes::Bytes::from(kall_proto::video::relay(from as u32, data));
+        if up.flags & kall_proto::video::FLAG_PREVIEW != 0 {
+            for (uid, v) in &live.voice {
+                if *uid != from
+                    && v.channel == channel
+                    && let Some(p) = live.media_peer(*uid)
+                {
+                    p.quic.send_datagram(packet.clone()).ok();
+                }
+            }
+            return;
+        }
+        let Some(watchers) = live.watchers.get(&(from, up.kind)) else { return };
         for w in watchers {
             if live.voice.get(w).is_some_and(|v| v.channel == channel)
                 && let Some(p) = live.media_peer(*w)

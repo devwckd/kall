@@ -1,5 +1,7 @@
 //! Receiving video: reassemble fragments, decode, and publish frames as [`rune::Pixels`] the
 //! UI draws. After a loss, predicted frames are dropped and a keyframe is requested.
+//! Screen-share previews (small, about once a second, every one a keyframe) are decoded on
+//! their own and published separately; a lost one just waits for the next.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -8,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use kall_proto::video::{Assembled, Reassembler, decode_down};
+use kall_proto::video::{Assembled, FLAG_PREVIEW, Reassembler, decode_down};
 use kall_proto::{C2S, Id, StreamKind};
 
 use super::codec::H264Decoder;
@@ -20,6 +22,8 @@ pub struct Incoming {
     thread: Option<JoinHandle<()>>,
     /// The latest picture of each stream being received.
     pub frames: Frames,
+    /// The latest preview of each screen share in the call.
+    pub previews: Frames,
     seen: Arc<AtomicU64>,
 }
 
@@ -48,13 +52,14 @@ impl Incoming {
     pub fn start(datagrams: Receiver<Vec<u8>>, request: impl Fn(C2S) + Send + 'static, wake: rune::Waker) -> Incoming {
         let stop = Arc::new(AtomicBool::new(false));
         let frames: Frames = Default::default();
+        let previews: Frames = Default::default();
         let seen = Arc::new(AtomicU64::new(0));
-        let (st, fr, sn) = (stop.clone(), frames.clone(), seen.clone());
+        let (st, fr, pv, sn) = (stop.clone(), frames.clone(), previews.clone(), seen.clone());
         let thread = std::thread::Builder::new()
             .name("kall-video-recv".into())
-            .spawn(move || run(&datagrams, &request, &st, &fr, &sn, &wake))
+            .spawn(move || run(&datagrams, &request, &st, &fr, &pv, &sn, &wake))
             .expect("video thread");
-        Incoming { stop, thread: Some(thread), frames, seen }
+        Incoming { stop, thread: Some(thread), frames, previews, seen }
     }
 
     /// Counts decoded frames, so the UI can tell something new arrived.
@@ -63,8 +68,9 @@ impl Incoming {
     }
 }
 
-fn run(rx: &Receiver<Vec<u8>>, request: &dyn Fn(C2S), stop: &AtomicBool, frames: &Frames, seen: &AtomicU64, wake: &rune::Waker) {
-    let mut streams: HashMap<(Id, StreamKind), Stream> = HashMap::new();
+fn run(rx: &Receiver<Vec<u8>>, request: &dyn Fn(C2S), stop: &AtomicBool, frames: &Frames, previews: &Frames, seen: &AtomicU64, wake: &rune::Waker) {
+    // Keyed by (sender, kind, is the preview).
+    let mut streams: HashMap<(Id, StreamKind, bool), Stream> = HashMap::new();
     let mut last_wake = Instant::now();
     let mut dirty = false;
     // Every 5 s: frames completed, decoded, dropped waiting for a keyframe, decode time.
@@ -78,8 +84,10 @@ fn run(rx: &Receiver<Vec<u8>>, request: &dyn Fn(C2S), stop: &AtomicBool, frames:
         if let Some(d) = d
             && let Some((user, frag)) = decode_down(&d)
         {
+            let preview = frag.flags & FLAG_PREVIEW != 0;
             let key = (user as Id, frag.kind);
-            let s = match streams.entry(key) {
+            let out_map = if preview { previews } else { frames };
+            let s = match streams.entry((key.0, key.1, preview)) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                 std::collections::hash_map::Entry::Vacant(v) => {
                     let Ok(dec) = H264Decoder::new() else { continue };
@@ -114,7 +122,7 @@ fn run(rx: &Receiver<Vec<u8>>, request: &dyn Fn(C2S), stop: &AtomicBool, frames:
                         match r {
                             Ok(Some((w, h))) => {
                                 s.need_key = false;
-                                let px = frames.lock().unwrap().entry(key).or_default().clone();
+                                let px = out_map.lock().unwrap().entry(key).or_default().clone();
                                 let mut buf = std::mem::take(&mut s.spare);
                                 buf.clear();
                                 buf.extend_from_slice(&s.rgba);
@@ -128,7 +136,7 @@ fn run(rx: &Receiver<Vec<u8>>, request: &dyn Fn(C2S), stop: &AtomicBool, frames:
                     }
                 }
             }
-            if s.need_key && s.asked.elapsed() > Duration::from_millis(600) {
+            if !preview && s.need_key && s.asked.elapsed() > Duration::from_millis(600) {
                 s.asked = Instant::now();
                 request(C2S::RequestKeyframe { user: key.0, kind: key.1 });
             }
@@ -147,8 +155,8 @@ fn run(rx: &Receiver<Vec<u8>>, request: &dyn Fn(C2S), stop: &AtomicBool, frames:
         let before = streams.len();
         streams.retain(|_, s| s.last_seen.elapsed() < Duration::from_secs(5));
         if streams.len() != before {
-            let mut f = frames.lock().unwrap();
-            f.retain(|k, _| streams.contains_key(k));
+            frames.lock().unwrap().retain(|k, _| streams.contains_key(&(k.0, k.1, false)));
+            previews.lock().unwrap().retain(|k, _| streams.contains_key(&(k.0, k.1, true)));
             dirty = true;
         }
         // Redraw at most ~60 times a second.

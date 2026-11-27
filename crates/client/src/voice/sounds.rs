@@ -8,6 +8,8 @@ pub enum Cue {
     Unmute,
     /// A message notification.
     Message,
+    /// Someone in the call started sharing their screen or camera.
+    Stream,
 }
 
 /// 48 kHz mono samples for a cue: short sine notes with a soft envelope.
@@ -18,6 +20,7 @@ pub fn render(cue: Cue) -> Vec<f32> {
         Cue::Mute => &[(440.0, 0.06)],
         Cue::Unmute => &[(740.0, 0.06)],
         Cue::Message => &[(988.0, 0.05), (1318.0, 0.09)],
+        Cue::Stream => &[(523.0, 0.06), (784.0, 0.06), (1046.0, 0.12)],
     };
     let mut out = Vec::new();
     for &(freq, secs) in notes {
@@ -38,7 +41,7 @@ pub fn render(cue: Cue) -> Vec<f32> {
 mod tests {
     #[test]
     fn cues_are_short_and_quiet() {
-        for c in [super::Cue::Join, super::Cue::Leave, super::Cue::Mute, super::Cue::Unmute, super::Cue::Message] {
+        for c in [super::Cue::Join, super::Cue::Leave, super::Cue::Mute, super::Cue::Unmute, super::Cue::Message, super::Cue::Stream] {
             let s = super::render(c);
             assert!(s.len() < 48_000 / 4);
             assert!(s.iter().all(|x| x.abs() < 0.3));

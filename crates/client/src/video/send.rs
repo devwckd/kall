@@ -8,7 +8,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use kall_proto::StreamKind;
-use kall_proto::video::{FLAG_KEYFRAME, fragment};
+use kall_proto::video::{FLAG_KEYFRAME, FLAG_PREVIEW, fragment};
 
 use super::Quality;
 use super::codec::{H264Encoder, fit_bgra};
@@ -102,6 +102,11 @@ fn run(kind: StreamKind, q: Quality, link: &VoiceLink, stop: &AtomicBool, slot: 
     let mut next = Instant::now();
     let mut frame_id = 0u32;
     let mut last_preview = Instant::now() - Duration::from_secs(1);
+    // Screen shares also send everyone in the call a small picture about once a second, so
+    // their tiles show what's being shared. Each one is a keyframe: it decodes on its own.
+    let mut thumbs = (kind == StreamKind::Screen).then(|| H264Encoder::new(1, 300_000, true).ok()).flatten();
+    let mut last_thumb = Instant::now() - Duration::from_secs(2);
+    let mut thumb_id = 0u32;
     let mut spare = Vec::new();
     // Every 5 s: frames in from capture, frames sent, time spent scaling and encoding.
     let (mut stat_t, mut n_in, mut n_out, mut t_scale, mut t_enc, mut bytes) = (Instant::now(), 0u32, 0u32, 0f64, 0f64, 0usize);
@@ -173,6 +178,18 @@ fn run(kind: StreamKind, q: Quality, link: &VoiceLink, stop: &AtomicBool, slot: 
         if last_preview.elapsed() > Duration::from_millis(200) {
             last_preview = Instant::now();
             let (small, pw, ph) = fit_bgra(&bgra, w, h, w * 4, 480, 270);
+            if let Some(enc) = thumbs.as_mut()
+                && last_thumb.elapsed() >= Duration::from_secs(1)
+            {
+                last_thumb = Instant::now();
+                enc.request_keyframe();
+                if let Ok(Some((bits, _))) = enc.encode(&small, pw, ph) {
+                    thumb_id = thumb_id.wrapping_add(1);
+                    for d in fragment(kind, thumb_id, FLAG_KEYFRAME | FLAG_PREVIEW, &bits) {
+                        link.send(d);
+                    }
+                }
+            }
             let mut rgba = std::mem::take(&mut spare);
             rgba.clear();
             rgba.extend(small.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], 255]));

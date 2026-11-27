@@ -252,6 +252,7 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
     let screen = m.streams.contains_key(&(u, StreamKind::Screen)) || (u == m.me && s.media.sharing.is_some());
     // Over video the name sits on a dark pill; on a plain tile, on the panel colour.
     let on_video = m.streams.contains_key(&(u, StreamKind::Camera)) || (u == m.me && s.media.camera.is_some());
+    let on_video = on_video || screen;
     let (pill, pill_text) = if on_video { (oklcha(0.1, 0.0, 0.0, 0.55), oklch(0.97, 0.0, 0.0)) } else { (p.panel, p.text) };
     let mut name = row().gap(6.0).center_y().px(9.0).h(24.0).radius(6.0).fill(pill);
     if v.deafened {
@@ -276,19 +277,44 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
             }
         });
     let cam = (m.streams.contains_key(&(u, StreamKind::Camera)) || (u == m.me && s.media.camera.is_some())).then(|| s.stream_pixels(u, StreamKind::Camera)).flatten();
-    t = match cam {
-        Some(px) => t.fill(oklch(0.08, 0.0, 0.0)).child(el().key("cam").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(&px, SurfaceFit::Fill)),
-        None => t.child(avatar(m, u, face, false)),
-    };
-    t = t.child(name.pin(Some(10.0), None, None, Some(10.0)));
+    // Video stops short of the edge while they talk, so the speaking ring stays visible.
+    let inset = if talking { 2.5 } else { 0.0 };
     if screen {
+        // A screen share takes over the tile: its live preview, a Watch button, and the
+        // camera (if on) as a small picture in the corner.
+        t = t.fill(oklch(0.12, 0.0, 0.0));
+        t = match s.stream_preview(u) {
+            Some(px) => t.child(el().key("screen").pin(Some(inset), Some(inset), Some(inset), Some(inset)).pixels_fit(&px, SurfaceFit::Fit)),
+            None => t.child(glyph(&icons::SCREEN, 40.0, oklcha(1.0, 0.0, 0.0, 0.35))),
+        };
+        if let Some(px) = cam {
+            t = t.child(el().key("cam").w(112.0).h(63.0).radius(8.0).clip_rounded(8.0).border(1.5, oklcha(1.0, 0.0, 0.0, 0.25)).pixels_fit(&px, SurfaceFit::Fill).pin(Some(10.0), Some(10.0), None, None));
+        }
+        let cta = if u == m.me { "You're sharing" } else { "Watch stream" };
+        let pill = row()
+            .key("watch")
+            .gap(8.0)
+            .center_y()
+            .px(14.0)
+            .h(36.0)
+            .radius(18.0)
+            .fill(if u == m.me { oklcha(0.1, 0.0, 0.0, 0.6) } else { p.accent })
+            .child(glyph(&icons::SCREEN, 16.0, if u == m.me { oklch(0.97, 0.0, 0.0) } else { p.on_accent }))
+            .child(text(cta).font(type_::TITLE).color(if u == m.me { oklch(0.97, 0.0, 0.0) } else { p.on_accent }));
         t = t
+            .child(row().key("watch-row").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(pill))
             .child(badge("LIVE", p.red).pin(None, None, Some(10.0), Some(10.0)))
             .role("button")
             .label(format!("Watch {}'s screen", m.name(u)))
             .hover_border(p.ink(0.3))
             .on_press(move |s: &mut State| s.focus_stream(Some(u)));
+    } else {
+        t = match cam {
+            Some(px) => t.fill(oklch(0.08, 0.0, 0.0)).child(el().key("cam").pin(Some(inset), Some(inset), Some(inset), Some(inset)).radius(12.0).clip_rounded(12.0).pixels_fit(&px, SurfaceFit::Fill)),
+            None => t.child(avatar(m, u, face, false)),
+        };
     }
+    t = t.child(name.pin(Some(10.0), None, None, Some(10.0)));
     if talking {
         t = t.border(2.5, p.accent);
     }
@@ -298,73 +324,119 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
     t
 }
 
-/// Choose what to share, at what quality, with or without sound.
+/// Choose what to share: tabs for screens and windows, a grid of live thumbnails, and the
+/// quality and sound in the footer.
 pub fn picker(s: &State) -> Option<El> {
+    use crate::video::capture::SourceKind;
     let p = pal();
     let pk = s.media.picker.as_ref()?;
-    let mut list = col().w_full().gap(4.0);
-    match &pk.sources {
-        None => list = list.child(text("Looking for screens and windows…").font(type_::BODY).color(p.faint).padding(12.0)),
-        Some(sources) if sources.is_empty() => list = list.child(text("Nothing to share was found.").font(type_::BODY).color(p.faint).padding(12.0)),
-        Some(sources) => {
-            let mut last = None;
-            for src in sources {
-                if last.as_ref() != Some(&src.kind) {
-                    let title = if src.kind == crate::video::capture::SourceKind::Display { "SCREENS" } else { "WINDOWS" };
-                    list = list.child(text(title).key(format!("sec-{title}")).font(super::SMALL).color(p.faint).px(10.0).pt(8.0).pb(4.0));
-                    last = Some(src.kind.clone());
+    let sources = pk.sources.as_deref().unwrap_or_default();
+    let count = |k: &SourceKind| sources.iter().filter(|s| &s.kind == k).count();
+
+    let tab = |key: &'static str, title: String, kind: SourceKind| {
+        let on = pk.tab == kind;
+        let t = el()
+            .key(key)
+            .role("tab")
+            .h(32.0)
+            .px(16.0)
+            .radius(8.0)
+            .center()
+            .child(text(title).font(type_::TITLE).color(if on { p.text } else { p.muted }))
+            .on_press(move |s: &mut State| {
+                if let Some(pk) = &mut s.media.picker {
+                    pk.selected = pk.sources.as_ref().and_then(|ss| ss.iter().find(|s| s.kind == kind)).map(|s| s.id.clone());
+                    pk.tab = kind.clone();
                 }
-                let on = pk.selected.as_deref() == Some(src.id.as_str());
-                let id = src.id.clone();
-                let ico = if src.kind == crate::video::capture::SourceKind::Display { &icons::SCREEN } else { &icons::WINDOW };
-                let mut r = row()
-                    .key(format!("src-{}", src.id))
-                    .role("button")
-                    .w_full()
-                    .h(38.0)
-                    .px(12.0)
-                    .gap(10.0)
-                    .center_y()
-                    .radius(10.0)
-                    .child(glyph(ico, 16.0, if on { p.accent2 } else { p.faint }))
-                    .child(text(src.name.clone()).font(type_::BODY).color(if on { p.text } else { p.muted }).grow(1.0).truncate())
-                    .on_press(move |s: &mut State| {
-                        if let Some(pk) = &mut s.media.picker {
-                            pk.selected = Some(id.clone());
-                        }
-                    });
-                r = if on { r.fill(p.select).border(1.0, p.accent.alpha(0.5)) } else { r.hover_fill(p.hover) };
-                list = list.child(r);
-            }
-        }
+            });
+        if on { t.fill(if p.dark { p.ink(0.1) } else { p.panel }).shadow(1.0, 4.0, oklcha(0.0, 0.0, 0.0, if p.dark { 0.3 } else { 0.08 })) } else { t.hover_fill(p.hover) }
+    };
+    let tabs = row()
+        .padding(3.0)
+        .gap(3.0)
+        .radius(10.0)
+        .fill(p.ink(0.05))
+        .child(tab("tab-screens", format!("Screens  {}", count(&SourceKind::Display)), SourceKind::Display))
+        .child(tab("tab-windows", format!("Windows  {}", count(&SourceKind::Window)), SourceKind::Window));
+
+    let mut grid = row().w_full().gap(12.0).flex_wrap();
+    let shown: Vec<_> = sources.iter().filter(|s| s.kind == pk.tab).collect();
+    if pk.sources.is_none() {
+        grid = grid.child(text("Looking for screens and windows…").font(type_::BODY).color(p.faint).padding(12.0));
+    } else if shown.is_empty() {
+        grid = grid.child(text(if pk.tab == SourceKind::Display { "No screens found." } else { "No windows to share." }).font(type_::BODY).color(p.faint).padding(12.0));
     }
-    let mut qualities = row().gap(6.0);
+    let thumbs = pk.thumbs.lock().unwrap();
+    for src in shown {
+        let on = pk.selected.as_deref() == Some(src.id.as_str());
+        let id = src.id.clone();
+        let ico = if src.kind == SourceKind::Display { &icons::SCREEN } else { &icons::WINDOW };
+        let mut shot = el().w(244.0).h(137.0).radius(10.0).clip_rounded(10.0).fill(p.ink(0.06)).center();
+        shot = match thumbs.get(&src.id) {
+            Some(px) => shot.fill(oklch(0.1, 0.0, 0.0)).child(el().pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(px, SurfaceFit::Fit)),
+            None => shot.child(glyph(ico, 28.0, p.faint)),
+        };
+        shot = if on { shot.border(2.5, p.accent) } else { shot.border(1.0, p.line).hover_border(p.ink(0.3)) };
+        let card = col()
+            .key(format!("src-{}", src.id))
+            .role("button")
+            .label(src.name.clone())
+            .w(244.0)
+            .gap(6.0)
+            .press_scale(0.98)
+            .child(shot)
+            .child(
+                row().w_full().gap(6.0).center_y().child(glyph(ico, 14.0, if on { p.accent2 } else { p.faint })).child(
+                    text(src.name.clone()).font(type_::TITLE).color(if on { p.text } else { p.muted }).grow(1.0).shrink().truncate(),
+                ),
+            )
+            .children((!src.detail.is_empty()).then(|| text(src.detail.clone()).font(type_::LABEL).color(p.faint).truncate()))
+            .on_press(move |s: &mut State| {
+                if let Some(pk) = &mut s.media.picker {
+                    pk.selected = Some(id.clone());
+                }
+            });
+        grid = grid.child(card);
+    }
+    drop(thumbs);
+
+    let mut qualities = row().padding(3.0).gap(3.0).radius(10.0).fill(p.ink(0.05));
     for (i, q) in crate::video::QUALITIES.iter().enumerate() {
         let on = pk.quality == i;
-        let c = el().key(format!("q-{i}")).role("button").h(30.0).px(12.0).radius(15.0).center().press_scale(0.96).child(text(q.label).font(type_::LABEL).color(if on { oklch(0.99, 0.0, 0.0) } else { p.muted }));
-        let c = if on { accent(c.fill(p.accent)) } else { c.fill(p.ink(0.06)).hover_fill(p.ink(0.1)) };
+        let c = el().key(format!("q-{i}")).role("button").label(q.label).h(30.0).px(12.0).radius(8.0).center().child(text(q.label).font(type_::LABEL).color(if on { p.on_accent } else { p.muted }));
+        let c = if on { c.fill(p.accent) } else { c.hover_fill(p.hover) };
         qualities = qualities.child(c.on_press(move |s: &mut State| {
             if let Some(pk) = &mut s.media.picker {
                 pk.quality = i;
             }
         }));
     }
+
     let audio_ok = crate::video::share_audio::supported();
+    let src = pk.source();
+    let sound_label = match src {
+        _ if !audio_ok => "Sharing sound isn't supported here yet".to_string(),
+        Some(s) if s.kind == SourceKind::Window && !s.detail.is_empty() => format!("Share {}'s sound", s.detail),
+        Some(s) if s.kind == SourceKind::Window => "Share the app's sound".to_string(),
+        _ => "Share computer sound (except kall)".to_string(),
+    };
     let audio = row()
         .key("share-audio")
         .role("switch")
+        .label(sound_label.clone())
         .checked(pk.audio)
         .gap(10.0)
         .center_y()
+        .shrink()
         .opacity(if audio_ok { 1.0 } else { 0.5 })
         .child(
-            el().size(40.0, 22.0)
-                .radius(11.0)
+            el().size(36.0, 20.0)
+                .radius(10.0)
                 .fill(if pk.audio { p.accent } else { p.ink(0.15) })
                 .motion(SOFT)
-                .child(el().size(18.0, 18.0).radius(9.0).fill(oklch(0.98, 0.0, 0.0)).absolute(if pk.audio { 20.0 } else { 2.0 }, 2.0).motion(SOFT)),
+                .child(el().size(16.0, 16.0).radius(8.0).fill(oklch(0.98, 0.0, 0.0)).absolute(if pk.audio { 18.0 } else { 2.0 }, 2.0).motion(SOFT)),
         )
-        .child(text(if audio_ok { "Share sound too (everything but kall)" } else { "Sharing sound isn't supported here yet" }).font(type_::BODY).color(p.text))
+        .child(text(sound_label).font(type_::BODY).color(p.text).truncate())
         .on_press(move |s: &mut State| {
             if let Some(pk) = &mut s.media.picker
                 && audio_ok
@@ -372,26 +444,50 @@ pub fn picker(s: &State) -> Option<El> {
                 pk.audio = !pk.audio;
             }
         });
-    let can_go = pk.selected.is_some();
-    let go = super::button("go-live", "Go live", 1).opacity(if can_go { 1.0 } else { 0.5 }).on_press(|s: &mut State| s.start_share());
-    let sheet = panel(col().w(560.0).max_h(620.0).padding(22.0).gap(12.0))
-        .fill(p.panel)
+
+    let can_go = src.is_some();
+    let mut go = super::button("go-live", "Go live", 1).opacity(if can_go { 1.0 } else { 0.5 });
+    if can_go {
+        go = go.on_press(|s: &mut State| s.start_share());
+    }
+    let footer = col()
+        .w_full()
+        .gap(12.0)
+        .pt(14.0)
+        .border_sides([1.0, 0.0, 0.0, 0.0], p.line)
+        .child(row().w_full().gap(12.0).center_y().child(super::label("QUALITY")).child(qualities).child(el().grow(1.0)))
+        .child(
+            row()
+                .w_full()
+                .gap(8.0)
+                .center_y()
+                .child(audio)
+                .child(el().grow(1.0))
+                .child(super::button("cancel-share", "Cancel", 0).on_press(|s: &mut State| s.media.picker = None))
+                .child(go),
+        );
+    let sheet = panel(col().w(820.0).h(620.0).padding(22.0).gap(16.0))
         .radius(14.0)
         .border(1.0, p.line)
-        .shadow(12.0, 40.0, oklcha(0.0, 0.0, 0.0, 0.3))
-        .transition(Transition::scale(0.96))
-        .child(row().w_full().center_y().child(text("Share your screen").font(TextStyle::new(18.0, 700.0)).color(p.text).grow(1.0)).child(super::round_button("close-picker", &icons::X, 32.0, false, p.muted, "Cancel").on_press(|s: &mut State| s.media.picker = None)))
-        .child(col().key("sources").w_full().h(300.0).scroll(rune::ScrollSpec::default()).scroll_edge_fade(12.0).child(list))
-        .child(super::label("QUALITY"))
-        .child(qualities)
-        .child(audio)
-        .child(row().w_full().pt(6.0).gap(8.0).child(el().grow(1.0)).child(super::button("cancel-share", "Cancel", 0).on_press(|s: &mut State| s.media.picker = None)).child(go))
+        .shadow(12.0, 40.0, oklcha(0.0, 0.0, 0.0, if p.dark { 0.4 } else { 0.18 }))
+        .transition(Transition::scale(0.97))
+        .child(
+            row()
+                .w_full()
+                .gap(16.0)
+                .center_y()
+                .child(text("Share your screen").font(TextStyle::new(17.0, 650.0)).color(p.text))
+                .child(tabs)
+                .child(el().grow(1.0))
+                .child(super::round_button("close-picker", &icons::X, 32.0, false, p.muted, "Cancel").on_press(|s: &mut State| s.media.picker = None)),
+        )
+        .child(col().key("sources").w_full().grow(1.0).min_h(0.0).scroll(rune::ScrollSpec::default()).scroll_edge_fade(12.0).child(grid))
+        .child(footer)
         .on_press(|_: &mut State| {});
     Some(
         el().key("picker")
             .pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0))
-            .fill(oklcha(0.0, 0.0, 0.0, 0.55))
-            .backdrop_blur(6.0)
+            .fill(oklcha(0.0, 0.0, 0.0, if p.dark { 0.5 } else { 0.25 }))
             .center()
             .on_press(|s: &mut State| s.media.picker = None)
             .child(sheet),

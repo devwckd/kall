@@ -2,7 +2,7 @@
 //! and your own user panel.
 
 
-use kall_proto::{C2S, ChannelKind, Status};
+use kall_proto::{C2S, ChannelKind, Status, StreamKind};
 use rune::tok::type_;
 use rune::{El, ScrollSpec, TextStyle, Transition, col, el, row, text};
 
@@ -92,6 +92,21 @@ pub fn view(s: &State, m: &Model) -> El {
                     .transition(Transition::offset(-8.0, 0.0).combined(Transition::opacity()))
                     .child(avatar(m, v.user, 22.0, s.speaking.contains(&v.user)))
                     .child(text(m.name(v.user).to_string()).font(type_::BODY).color(p.muted).grow(1.0).truncate());
+                // Sharing: a LIVE pill (click to watch) and a camera mark.
+                if m.streams.contains_key(&(v.user, StreamKind::Camera)) {
+                    r = r.child(glyph(&icons::CAMERA, 14.0, p.faint));
+                }
+                if m.streams.contains_key(&(v.user, StreamKind::Screen)) {
+                    let u = v.user;
+                    r = r.child(
+                        badge("LIVE", p.red)
+                            .key(format!("live-{u}"))
+                            .role("button")
+                            .label(format!("Watch {}'s screen", m.name(u)))
+                            .help("Watch")
+                            .on_press(move |s: &mut State| s.watch_stream(u)),
+                    );
+                }
                 if v.deafened {
                     r = r.child(glyph(&icons::HEADPHONES_OFF, 14.0, p.red));
                 } else if v.muted {
