@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "kall"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "aec3",
  "anyhow",
@@ -3082,14 +3082,14 @@ dependencies = [
 
 [[package]]
 name = "kall-hwaccel"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "ffmpeg-next",
 ]
 
 [[package]]
 name = "kall-proto"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "postcard",
@@ -3103,7 +3103,7 @@ dependencies = [
 
 [[package]]
 name = "kall-server"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "argon2",

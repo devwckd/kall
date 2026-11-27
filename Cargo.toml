@@ -4,7 +4,7 @@ members = ["crates/proto", "crates/server", "crates/client", "crates/hwaccel"]
 default-members = ["crates/server", "crates/client"]
 
 [workspace.package]
-version = "0.3.1"
+version = "0.3.2"
 edition = "2024"
 publish = false
 license = "MIT"
