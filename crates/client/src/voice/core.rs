@@ -38,11 +38,25 @@ pub struct Settings {
     pub noise_suppression: bool,
     pub echo_cancellation: bool,
     pub bitrate: u32,
+    /// Gain on the cleaned microphone signal before it's encoded.
+    pub input_gain: f32,
+    /// Gain on everyone we hear (the engine multiplies it into each person's volume).
+    pub output_gain: f32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { muted: false, deafened: false, mode: Mode::VoiceActivity, vad_threshold: 0.6, noise_suppression: true, echo_cancellation: true, bitrate: 64_000 }
+        Settings {
+            muted: false,
+            deafened: false,
+            mode: Mode::VoiceActivity,
+            vad_threshold: 0.6,
+            noise_suppression: true,
+            echo_cancellation: true,
+            bitrate: 64_000,
+            input_gain: 1.0,
+            output_gain: 1.0,
+        }
     }
 }
 
@@ -142,7 +156,12 @@ impl Core {
         // RNNoise works on i16-scaled floats.
         let scaled: Vec<f32> = cleaned.iter().map(|x| x * 32768.0).collect();
         self.vad = self.denoise.process_frame(&mut self.scratch, &scaled);
-        let out: Vec<f32> = if s.noise_suppression { self.scratch.iter().map(|x| x / 32768.0).collect() } else { cleaned };
+        let mut out: Vec<f32> = if s.noise_suppression { self.scratch.iter().map(|x| x / 32768.0).collect() } else { cleaned };
+        if (s.input_gain - 1.0).abs() > 1e-3 {
+            for x in &mut out {
+                *x = (*x * s.input_gain).clamp(-1.0, 1.0);
+            }
+        }
         self.level = out.iter().fold(0.0f32, |m, x| m.max(x.abs())).min(1.0);
 
         let open = match s.mode {

@@ -290,7 +290,7 @@ fn run(link: &VoiceLink, shared: &Shared, input: Option<String>, output: Option<
         }
         {
             let vols = shared.volumes.lock().unwrap();
-            core.render(&mut out, &settings, |u| vols.get(&u).copied().unwrap_or(1.0));
+            core.render(&mut out, &settings, |u| vols.get(&u).copied().unwrap_or(1.0) * settings.output_gain);
         }
         {
             let mut q = spk_q.lock().unwrap();

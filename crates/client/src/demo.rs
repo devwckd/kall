@@ -52,13 +52,32 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
     }),
     ("share-screens", |s| share_picker(s, crate::video::capture::SourceKind::Display)),
     ("share-windows", |s| share_picker(s, crate::video::capture::SourceKind::Window)),
+    ("mic-menu", |s| {
+        // Right-clicked the call's mic button.
+        load(s, 3);
+        if let Some(m) = &mut s.m {
+            m.voice.insert(1, VoiceMember { user: 1, channel: 3, muted: false, deafened: false });
+        }
+        s.voice_channel = Some(3);
+        s.devices = Some(demo_devices());
+        s.voice.input = Some("mic1".into());
+        s.voice.input_volume = 1.25;
+        s.audio_menu = Some(crate::ui::audio_menu::Open { side: crate::ui::audio_menu::Side::Input, x: 613.0, y: 700.0 });
+    }),
+    ("speaker-menu", |s| {
+        // Right-clicked the headphones in the sidebar's user panel.
+        load(s, 1);
+        s.devices = Some(demo_devices());
+        s.voice.output_volume = 0.8;
+        s.audio_menu = Some(crate::ui::audio_menu::Open { side: crate::ui::audio_menu::Side::Output, x: 232.0, y: 746.0 });
+    }),
     ("voice-settings", |s| {
         load(s, 1);
         crate::ui::settings::open(s, Tab::Voice);
         s.voice.mode = crate::voice::core::Mode::PushToTalk;
         s.devices = Some(crate::voice::devices::Devices {
-            inputs: vec![crate::voice::devices::Device { id: "mic1".into(), name: "Microphone (Focusrite USB Audio)".into() }],
-            outputs: vec![crate::voice::devices::Device { id: "out1".into(), name: "Headphones (Focusrite USB Audio)".into() }],
+            inputs: vec![crate::voice::devices::Device { id: "mic1".into(), name: "Microphone (USB Audio Interface)".into() }],
+            outputs: vec![crate::voice::devices::Device { id: "out1".into(), name: "Headphones (USB Audio Interface)".into() }],
         });
         s.voice.input = Some("mic1".into());
     }),
@@ -126,6 +145,14 @@ fn share_picker(s: &mut State, tab: crate::video::capture::SourceKind) {
         pk.selected = Some("w:2".into());
     }
     s.media.picker = Some(pk);
+}
+
+fn demo_devices() -> crate::voice::devices::Devices {
+    use crate::voice::devices::Device;
+    crate::voice::devices::Devices {
+        inputs: vec![Device { id: "mic1".into(), name: "Microphone (USB Audio Interface)".into() }, Device { id: "mic2".into(), name: "Headset Microphone".into() }],
+        outputs: vec![Device { id: "out1".into(), name: "Headphones (USB Audio Interface)".into() }, Device { id: "out2".into(), name: "Speakers".into() }],
+    }
 }
 
 /// A stand-in for a shared window: a dark editor with coloured lines of "code".
