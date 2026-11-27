@@ -2,6 +2,11 @@
 
 Each release's section here is also the top of its GitHub release notes.
 
+## v0.3.0
+
+### New
+- **Crop your avatar.** After picking an image, drag and zoom it in a round frame before saving. (#7, #21)
+
 ## v0.2.0
 
 ### New
