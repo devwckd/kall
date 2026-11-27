@@ -26,9 +26,6 @@ jobs:
           - os: macos-latest
             formats: app,dmg
             platform: darwin-aarch64
-          - os: macos-15-intel
-            formats: app,dmg
-            platform: darwin-x86_64
           - os: ubuntu-24.04
             formats: appimage,deb
             platform: linux-x86_64
