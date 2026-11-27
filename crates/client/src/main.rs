@@ -128,6 +128,8 @@ pub struct State {
     pub update: Option<cargo_packager_updater::Update>,
     update_rx: Option<std::sync::mpsc::Receiver<cargo_packager_updater::Update>>,
     pub updating: bool,
+    /// Why the last self-update couldn't run, shown on the update card.
+    pub update_error: Option<String>,
     update_failed: Option<std::sync::mpsc::Receiver<String>>,
 }
 
@@ -184,6 +186,7 @@ impl Default for State {
             update: None,
             update_rx: None,
             updating: false,
+            update_error: None,
             update_failed: None,
         }
     }
@@ -331,7 +334,13 @@ impl State {
     }
 
     pub fn install_update(&mut self) {
-        let Some(u) = self.update.take() else { return };
+        let Some(u) = self.update.clone() else { return };
+        // Say why before hanging up, when this copy can't replace itself (#38).
+        if let Err(e) = update::preflight() {
+            self.update_error = Some(e.to_string());
+            return;
+        }
+        self.update_error = None;
         self.updating = true;
         self.disconnect();
         let wake = self.waker.clone();
@@ -749,7 +758,7 @@ fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
     }
     if let Some(e) = s.update_failed.as_ref().and_then(|r| r.try_recv().ok()) {
         s.updating = false;
-        s.toast(format!("Update failed: {e}"));
+        s.update_error = Some(e);
         changed = true;
     }
     s.want_visible_thumbs();

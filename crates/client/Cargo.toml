@@ -51,6 +51,12 @@ ffmpeg-static = ["ffmpeg", "ffmpeg-next/static", "kall-hwaccel/static"]
 [build-dependencies]
 winresource = "0.1"
 
+# Linux: talk to PulseAudio (or PipeWire's PulseAudio server, the Ubuntu default) instead of
+# raw ALSA: proper buffering, and the devices the system's sound settings show. The protocol
+# client is pure Rust, so nothing new to install; without a sound server cpal falls back to ALSA.
+[target."cfg(target_os = \"linux\")".dependencies]
+cpal = { version = "0.18", features = ["pulseaudio"] }
+
 [target."cfg(windows)".dependencies]
 wasapi = "0.27"
 windows-capture = "2"

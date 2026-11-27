@@ -112,6 +112,34 @@ The builds aren't code-signed yet:
 After that, kall keeps itself up to date. Every update is checked against a signing key that's
 built into the app.
 
+### Installing on Linux
+
+**AppImage (updates itself).** Put it in a folder you own, make it executable, and run it:
+
+```sh
+mkdir -p ~/Applications
+mv ~/Downloads/kall_*.AppImage ~/Applications/
+chmod +x ~/Applications/kall_*.AppImage
+~/Applications/kall_*.AppImage
+```
+
+- AppImages need FUSE 2. On Ubuntu 24.04, install it with `sudo apt install libfuse2t64`. On
+  Debian and older Ubuntu, the package is `libfuse2`.
+- To update, kall replaces its own AppImage file, so the file and its folder must be writable by
+  you. In a root-owned place like `/opt` or `/usr/local/bin`, or when a tool such as
+  AppImageLauncher moved it somewhere you can't write, the update card says so. Then move the
+  AppImage to `~/Applications`, or download the new version by hand.
+- Start the AppImage itself, not a copy extracted with `--appimage-extract`. An extracted copy
+  can't update.
+
+**.deb (no self-updates).** Install it with apt, which also pulls in what it needs:
+
+```sh
+sudo apt install ./kall_*_amd64.deb
+```
+
+To update, download the new `.deb` and run the same command again.
+
 Open kall, choose **Create account**, and enter the server address, your invite code, a username
 and a password.
 

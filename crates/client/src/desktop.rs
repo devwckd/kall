@@ -294,37 +294,51 @@ pub fn play_alone(cue: Cue, gain: f32) {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
         let Some(dev) = cpal::default_host().default_output_device() else { return };
         let Ok(sc) = dev.default_output_config() else { return };
-        if sc.sample_format() != cpal::SampleFormat::F32 {
-            return; // the common case everywhere; quieter than wrong
-        }
         let cfg = sc.config();
-        let (rate, ch) = (cfg.sample_rate, cfg.channels as usize);
+        let rate = cfg.sample_rate;
         let src = sounds::render(cue);
         // Resample the 48 kHz cue to the device rate.
         let mut out = Vec::new();
         crate::voice::resample::Resampler::new(48_000, rate).process(&src, &mut out);
         let len = out.len();
-        let data = std::sync::Arc::new(out);
-        let pos = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (d, p) = (data.clone(), pos.clone());
-        let Ok(stream) = dev.build_output_stream(
-            cfg,
-            move |buf: &mut [f32], _| {
-                for frame in buf.chunks_mut(ch) {
-                    let i = p.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let v = d.get(i).copied().unwrap_or(0.0) * gain;
-                    frame.fill(v);
-                }
-            },
-            |_| {},
-            None,
-        ) else {
-            return;
+        let data: Vec<f32> = out.into_iter().map(|v| v * gain).collect();
+        // Whatever format the device wants (PulseAudio often runs 16-bit).
+        let stream = match sc.sample_format() {
+            cpal::SampleFormat::F32 => cue_stream::<f32>(&dev, cfg, data),
+            cpal::SampleFormat::I16 => cue_stream::<i16>(&dev, cfg, data),
+            cpal::SampleFormat::U16 => cue_stream::<u16>(&dev, cfg, data),
+            cpal::SampleFormat::I32 => cue_stream::<i32>(&dev, cfg, data),
+            _ => None,
         };
-        if stream.play().is_ok() {
+        if let Some(stream) = stream
+            && stream.play().is_ok()
+        {
             std::thread::sleep(std::time::Duration::from_secs_f64(len as f64 / rate as f64 + 0.15));
         }
     });
+}
+
+/// An output stream that plays `data` (mono, device rate) once on every channel.
+fn cue_stream<T>(dev: &cpal::Device, cfg: cpal::StreamConfig, data: Vec<f32>) -> Option<cpal::Stream>
+where
+    T: cpal::SizedSample + cpal::FromSample<f32>,
+{
+    use cpal::traits::DeviceTrait;
+    let ch = cfg.channels as usize;
+    let mut i = 0usize;
+    dev.build_output_stream(
+        cfg,
+        move |buf: &mut [T], _| {
+            for frame in buf.chunks_mut(ch) {
+                let v = T::from_sample(data.get(i).copied().unwrap_or(0.0));
+                i += 1;
+                frame.fill(v);
+            }
+        },
+        |_| {},
+        None,
+    )
+    .ok()
 }
 
 // ---- start at login ----

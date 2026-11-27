@@ -125,14 +125,26 @@ pub fn view(s: &State, m: &Model) -> El {
         .child(user_panel(s, m))
 }
 
-/// "A new kall is ready" with a restart button.
+/// "A new kall is ready" with a restart button; when this copy can't update itself, why, and a
+/// button to the download page.
 fn update_card(s: &State) -> Option<El> {
     let p = pal();
+    let version = s.update.as_ref()?.version.trim_start_matches('v').to_string();
     let label = if s.updating {
         "Updating… kall will restart".to_string()
+    } else if s.update_error.is_some() {
+        format!("kall {version} is out, but this copy can't update itself")
     } else {
-        format!("kall {} is available", s.update.as_ref()?.version.trim_start_matches('v'))
+        format!("kall {version} is available")
     };
+    let mut info = col()
+        .grow(1.0)
+        .shrink()
+        .gap(2.0)
+        .child(text(label).font(type_::LABEL).color(p.text).wrap());
+    if let Some(e) = &s.update_error {
+        info = info.child(text(e.clone()).font(type_::LABEL).color(p.muted).wrap());
+    }
     let mut card = row()
         .key("update")
         .mx(8.0)
@@ -145,8 +157,12 @@ fn update_card(s: &State) -> Option<El> {
         .fill(p.accent.alpha(0.12))
         .border(1.0, p.accent.alpha(0.35))
         .transition(Transition::offset(0.0, 12.0).combined(Transition::opacity()))
-        .child(text(label).font(type_::LABEL).color(p.text).grow(1.0).shrink().wrap());
-    if !s.updating {
+        .child(info);
+    if s.update_error.is_some() {
+        card = card.child(super::button("download-update", "Download", 1).h(28.0).on_press_tx(|_: &mut State, tx| {
+            tx.open_url(crate::update::DOWNLOADS).ok();
+        }));
+    } else if !s.updating {
         card = card.child(super::button("restart-update", "Restart", 1).h(28.0).on_press(|s: &mut State| s.install_update()));
     }
     Some(card)

@@ -2,6 +2,13 @@
 
 Each release's section here is also the top of its GitHub release notes.
 
+## Unreleased
+
+### Fixed
+- **Sound cues on Linux** (joining, mute, pings) play through PulseAudio or PipeWire instead of ALSA's compatibility layer, so they're no longer choppy. They also play on devices that don't use 32-bit float audio. (#36)
+- **Shorter device lists on Linux.** The microphone and speaker lists show your sound server's devices, the same ones your system's sound settings show, without ALSA's aliases or monitor sources. (#37)
+- **AppImage updates.** kall restarts into the new AppImage instead of the old one. When it can't replace its file (no write permission, or not run as an AppImage), the update card says why and has a **Download** button. The README has Linux install tips. (#38)
+
 ## v0.3.2
 
 ### New
