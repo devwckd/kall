@@ -267,8 +267,9 @@ pub fn register_notifications() {
     let dir = std::env::temp_dir().join("kall");
     std::fs::create_dir_all(&dir).ok();
     let icon = dir.join("icon.png");
-    if !icon.exists()
-        && let Ok(png) = icon_png(256)
+    // Rewrite it whenever the logo changed (an old copy would keep showing the old icon).
+    if let Ok(png) = icon_png(256)
+        && std::fs::read(&icon).ok().as_deref() != Some(png.as_slice())
     {
         std::fs::write(&icon, png).ok();
     }
