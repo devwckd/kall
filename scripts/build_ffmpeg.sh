@@ -4,7 +4,9 @@
 # scaler. Nothing to bundle with the installers, and no extra runtime libraries.
 #
 #   macOS: VideoToolbox (system framework).
-#   Linux: NVENC (loads the NVIDIA driver at run time; nv-codec-headers are headers only).
+#   Linux: NVENC (loads the NVIDIA driver at run time; nv-codec-headers are headers only), and
+#          VAAPI for AMD and Intel (needs libva at build and run time).
+# Plus GPU decoding (VideoToolbox / VAAPI), used with KALL_GPU_DECODE=1.
 #
 # usage: scripts/build_ffmpeg.sh <install prefix>
 # Then: PKG_CONFIG_PATH=<prefix>/lib/pkgconfig cargo build -p kall --features ffmpeg-static
@@ -28,13 +30,14 @@ common=(
 
 case "$(uname -s)" in
   Darwin)
-    extra=(--enable-videotoolbox --enable-encoder=h264_videotoolbox)
+    extra=(--enable-videotoolbox --enable-encoder=h264_videotoolbox --enable-hwaccel=h264_videotoolbox)
     ;;
   Linux)
     curl -sSL "https://github.com/FFmpeg/nv-codec-headers/archive/refs/tags/$NVCODEC_TAG.tar.gz" | tar xz
     make -C "nv-codec-headers-$NVCODEC_TAG" PREFIX="$PREFIX" install > /dev/null
     export PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-    extra=(--enable-ffnvcodec --enable-nvenc --enable-encoder=h264_nvenc)
+    extra=(--enable-ffnvcodec --enable-nvenc --enable-encoder=h264_nvenc
+           --enable-vaapi --enable-encoder=h264_vaapi --enable-hwaccel=h264_vaapi)
     ;;
   *)
     echo "build_ffmpeg.sh is for macOS and Linux (Windows uses BtbN's shared build)" >&2

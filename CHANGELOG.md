@@ -2,6 +2,12 @@
 
 Each release's section here is also the top of its GitHub release notes.
 
+## Unreleased
+
+### New
+- **Screen share on AMD and Intel GPUs on Linux** (VAAPI), alongside NVIDIA. The Linux packages now need libva, which desktop distros already have. (#30)
+- **GPU video decoding** (D3D11VA, VideoToolbox, VAAPI), off by default and turned on with `KALL_GPU_DECODE=1`. Copying frames back from the GPU made it slower than decoding on the CPU. (#30)
+
 ## v0.3.1
 
 ### New

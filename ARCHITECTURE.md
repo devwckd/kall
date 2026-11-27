@@ -84,8 +84,10 @@ handles them in `poll`.
   - **Codec:** H.264. Release builds encode on the GPU through FFmpeg and decode with FFmpeg:
     Windows with BtbN's shared build (NVENC, AMF or Quick Sync, whichever opens first, with the
     DLLs bundled), macOS and Linux with a small static FFmpeg built in CI (VideoToolbox; NVENC
-    on Linux). Otherwise, or if no GPU encoder opens, OpenH264 on the CPU. Both produce
-    the same Annex-B stream, and `KALL_SOFTWARE_VIDEO=1` forces OpenH264.
+    or VAAPI on Linux). VAAPI and GPU decoding use FFmpeg's hardware APIs through
+    `crates/hwaccel`, which keeps the FFI out of the app crate. GPU decoding (D3D11VA,
+    VideoToolbox, VAAPI) is opt-in with `KALL_GPU_DECODE=1`: copying frames back from the GPU
+    made it slower than FFmpeg's CPU decoder.
 - **Desktop:** OS notifications (`rune-notify`), a tray icon with an unread badge, close to
   tray, optional start at login (`auto-launch`) and sound cues.
 - **Updates:** official builds read `latest.json` from the GitHub release. They install the
@@ -93,7 +95,8 @@ handles them in `poll`.
 
 ## Ideas not built yet
 
-- VAAPI encoding for AMD and Intel GPUs on Linux (needs GPU frame upload); GPU decoding; AV1.
+- Drawing decoded frames straight from the GPU (which would make GPU decoding worth turning on);
+  AV1.
 - Direct messages and file uploads in chat.
 - Native capture APIs on macOS (ScreenCaptureKit) and Linux (PipeWire portal), and system
   audio there.

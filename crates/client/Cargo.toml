@@ -37,14 +37,16 @@ opener = { version = "0.8", features = ["reveal"] }
 # Hardware video (the `ffmpeg` feature): FFmpeg's GPU encoders and decoder. Needs FFmpeg 9
 # development files (FFMPEG_DIR) and libclang to build; release builds turn it on.
 ffmpeg-next = { version = "9.1", optional = true, default-features = false, features = ["codec", "format", "software-scaling"] }
+# GPU decoding and VAAPI encoding (the FFI lives there; this crate forbids unsafe).
+kall-hwaccel = { path = "../hwaccel", optional = true }
 
 # Screen capture on macOS/Linux, and the share picker's thumbnails everywhere.
 xcap = "0.9"
 
 [features]
-ffmpeg = ["dep:ffmpeg-next"]
+ffmpeg = ["dep:ffmpeg-next", "dep:kall-hwaccel"]
 # macOS/Linux release builds: FFmpeg linked statically (scripts/build_ffmpeg.sh), nothing to bundle.
-ffmpeg-static = ["ffmpeg", "ffmpeg-next/static"]
+ffmpeg-static = ["ffmpeg", "ffmpeg-next/static", "kall-hwaccel/static"]
 
 [build-dependencies]
 winresource = "0.1"
@@ -71,4 +73,5 @@ binaries = [{ path = "kall", main = true }]
 installMode = "currentUser"
 
 [package.metadata.packager.deb]
-depends = ["libasound2", "libxdo3"]
+# libva: VAAPI video encoding (AMD and Intel GPUs) in the statically linked FFmpeg.
+depends = ["libasound2", "libxdo3", "libva2", "libva-drm2"]

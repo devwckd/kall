@@ -13,6 +13,8 @@ const ENCODERS: &[(&str, &str, &[(&str, &str)])] = &[
     ("h264_amf", "AMF", &[("usage", "ultralowlatency"), ("latency", "1"), ("async_depth", "1"), ("rc", "cbr"), ("quality", "speed"), ("forced_idr", "1"), ("header_spacing", "1")]),
     ("h264_qsv", "Quick Sync", &[("preset", "veryfast"), ("async_depth", "1"), ("look_ahead", "0")]),
     ("h264_videotoolbox", "VideoToolbox", &[("realtime", "1"), ("allow_sw", "0")]),
+    // AMD and Intel on Linux: frames are uploaded to GPU surfaces first (kall_hwaccel).
+    ("h264_vaapi", "VAAPI", &[("rc_mode", "CBR")]),
 ];
 
 pub fn init() -> bool {
@@ -28,6 +30,8 @@ pub fn init() -> bool {
 /// A hardware encoder, opened for one frame size.
 pub struct HwEncoder {
     enc: ff::encoder::video::Encoder,
+    /// VAAPI's GPU surfaces (only for h264_vaapi).
+    vaapi: Option<kall_hwaccel::VaapiFrames>,
     scaler: scaling::Context,
     bgra: ff::frame::Video,
     nv12: ff::frame::Video,
@@ -65,7 +69,16 @@ impl HwEncoder {
         let mut ctx = ff::codec::context::Context::new_with_codec(codec).encoder().video()?;
         ctx.set_width(width as u32);
         ctx.set_height(height as u32);
-        ctx.set_format(Pixel::NV12);
+        // VAAPI encodes from GPU surfaces; the others take NV12 frames directly.
+        let vaapi = if label == "VAAPI" {
+            let frames = kall_hwaccel::VaapiFrames::new(width as u32, height as u32).ok_or_else(|| anyhow!("no VAAPI device"))?;
+            ctx.set_format(Pixel::VAAPI);
+            frames.attach_encoder(&mut ctx);
+            Some(frames)
+        } else {
+            ctx.set_format(Pixel::NV12);
+            None
+        };
         ctx.set_time_base(ff::Rational::new(1, fps as i32));
         ctx.set_frame_rate(Some(ff::Rational::new(fps as i32, 1)));
         ctx.set_bit_rate(bitrate as usize);
@@ -81,6 +94,7 @@ impl HwEncoder {
         let scaler = scaling::Context::get(Pixel::BGRA, width as u32, height as u32, Pixel::NV12, width as u32, height as u32, scaling::Flags::FAST_BILINEAR)?;
         Ok(HwEncoder {
             enc,
+            vaapi,
             scaler,
             bgra: ff::frame::Video::new(Pixel::BGRA, width as u32, height as u32),
             nv12: ff::frame::Video::new(Pixel::NV12, width as u32, height as u32),
@@ -107,7 +121,13 @@ impl HwEncoder {
         self.nv12.set_pts(Some(self.pts));
         self.pts += 1;
         self.nv12.set_kind(if key { ff::picture::Type::I } else { ff::picture::Type::None });
-        self.enc.send_frame(&self.nv12)?;
+        match &self.vaapi {
+            Some(frames) => {
+                let hw = frames.upload(&self.nv12)?;
+                self.enc.send_frame(&hw)?
+            }
+            None => self.enc.send_frame(&self.nv12)?,
+        }
         // Whatever the encoder has ready. Some GPU encoders (AMF) hand a frame back on the
         // next call: one frame of delay, which waiting doesn't remove.
         let mut out: Option<(Vec<u8>, bool)> = None;
@@ -171,26 +191,33 @@ fn remember_headers(data: &[u8], headers: &mut Vec<u8>) {
     }
 }
 
-/// FFmpeg's H.264 decoder, output as RGBA.
+/// FFmpeg's H.264 decoder, on the GPU where the platform allows (D3D11VA, VideoToolbox,
+/// VAAPI) and on the CPU otherwise, output as RGBA.
 pub struct FfDecoder {
     dec: ff::decoder::Video,
+    /// The GPU API decoding, if any ("D3D11VA", …).
+    pub gpu: Option<&'static str>,
     scaler: Option<(scaling::Context, (u32, u32, Pixel))>,
     frame: ff::frame::Video,
     rgba: ff::frame::Video,
 }
 
 impl FfDecoder {
-    pub fn new() -> Result<FfDecoder> {
+    /// `gpu`: try decoding on the GPU first.
+    pub fn new(gpu: bool) -> Result<FfDecoder> {
         if !init() {
             bail!("FFmpeg didn't start");
         }
         let codec = ff::decoder::find(ff::codec::Id::H264).ok_or_else(|| anyhow!("no H.264 decoder"))?;
         let mut ctx = ff::codec::context::Context::new_with_codec(codec);
         ctx.set_flags(ff::codec::Flags::LOW_DELAY);
-        // Slice threads add no latency (frame threads would hold frames back).
-        ctx.set_threading(ff::threading::Config { kind: ff::threading::Type::Slice, count: 4 });
+        let gpu = if gpu { kall_hwaccel::attach_decoder(&mut ctx) } else { None };
+        if gpu.is_none() {
+            // Slice threads add no latency (frame threads would hold frames back).
+            ctx.set_threading(ff::threading::Config { kind: ff::threading::Type::Slice, count: 4 });
+        }
         let dec = ctx.decoder().video()?;
-        Ok(FfDecoder { dec, scaler: None, frame: ff::frame::Video::empty(), rgba: ff::frame::Video::empty() })
+        Ok(FfDecoder { dec, gpu, scaler: None, frame: ff::frame::Video::empty(), rgba: ff::frame::Video::empty() })
     }
 
     /// Decode one frame into `rgba` (packed, resized as needed); returns its size.
@@ -198,6 +225,10 @@ impl FfDecoder {
         self.dec.send_packet(&ff::Packet::copy(data))?;
         let mut got = None;
         while self.dec.receive_frame(&mut self.frame).is_ok() {
+            // A GPU frame is copied back first (to NV12, usually).
+            if let Some(sw) = kall_hwaccel::download(&self.frame)? {
+                self.frame = sw;
+            }
             let (w, h, fmt) = (self.frame.width(), self.frame.height(), self.frame.format());
             if self.scaler.as_ref().is_none_or(|(_, k)| *k != (w, h, fmt)) {
                 let sc = scaling::Context::get(fmt, w, h, Pixel::RGBA, w, h, scaling::Flags::FAST_BILINEAR)?;
@@ -255,7 +286,8 @@ mod bench {
             })
             .collect();
         let mut enc = super::HwEncoder::open(w, h, 60, 8_000_000).unwrap();
-        let mut dec = super::FfDecoder::new().unwrap();
+        // BENCH_GPU_DECODE=1 decodes on the GPU (D3D11VA, VideoToolbox, VAAPI).
+        let mut dec = super::FfDecoder::new(std::env::var_os("BENCH_GPU_DECODE").is_some()).unwrap();
         let (mut conv, mut code, mut decode, mut bytes, mut n) = (0.0, 0.0, 0.0, 0, 0);
         let mut rgba = Vec::new();
         for (i, f) in frames.iter().enumerate() {
@@ -271,6 +303,6 @@ mod bench {
                 decode += t.elapsed().as_secs_f64();
             }
         }
-        println!("{} 1080p60: convert {:.2} ms, encode {:.2} ms, decode {:.2} ms per frame, {} KB/frame", enc.name, conv / n as f64 * 1e3, code / n as f64 * 1e3, decode / frames.len() as f64 * 1e3, bytes / frames.len() / 1024);
+        println!("{} 1080p60 (decode on {}): convert {:.2} ms, encode {:.2} ms, decode {:.2} ms per frame, {} KB/frame", enc.name, dec.gpu.unwrap_or("CPU"), conv / n as f64 * 1e3, code / n as f64 * 1e3, decode / frames.len() as f64 * 1e3, bytes / frames.len() / 1024);
     }
 }
