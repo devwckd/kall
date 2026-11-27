@@ -49,6 +49,10 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         load(s, 1);
         crate::ui::settings::open(s, Tab::Profile);
     }),
+    ("app-settings", |s| {
+        load(s, 1);
+        crate::ui::settings::open(s, Tab::App);
+    }),
     ("server", |s| {
         load(s, 1);
         crate::ui::settings::open(s, Tab::Invites);

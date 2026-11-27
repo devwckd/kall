@@ -382,6 +382,8 @@ fn app_tab(s: &State) -> El {
                 Err(e) => s.toast(format!("Couldn't change that: {e:#}")),
             }
         }))
+        .child(label("ABOUT").pt(6.0))
+        .child(text(concat!("kall ", env!("CARGO_PKG_VERSION"))).key("version").font(type_::BODY).color(p.muted).selectable(true))
 }
 
 fn voice_tab(s: &State) -> El {
