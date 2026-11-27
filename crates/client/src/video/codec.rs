@@ -46,6 +46,14 @@ fn make(fps: u32, bitrate: u32, screen: bool) -> Result<Encoder> {
     Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(|e| anyhow!("H.264 encoder: {e}"))
 }
 
+/// GPU decoding, only with `KALL_GPU_DECODE=1`: measured on an RX 9070 XT at 1080p, copying
+/// each frame back from the GPU made it slower (8.1 ms) than FFmpeg's CPU decoder (5.7 ms).
+/// Worth it once frames can be drawn straight from the GPU.
+#[cfg(feature = "ffmpeg")]
+fn gpu_decode() -> bool {
+    std::env::var("KALL_GPU_DECODE").is_ok_and(|v| v == "1")
+}
+
 /// Hardware video is off (`KALL_SOFTWARE_VIDEO=1`).
 fn software_only() -> bool {
     std::env::var("KALL_SOFTWARE_VIDEO").is_ok_and(|v| v == "1")
@@ -164,7 +172,7 @@ impl H264Decoder {
     pub fn new() -> Result<H264Decoder> {
         #[cfg(feature = "ffmpeg")]
         if !software_only()
-            && let Ok(ff) = super::ff::FfDecoder::new()
+            && let Ok(ff) = super::ff::FfDecoder::new(gpu_decode())
         {
             return Ok(H264Decoder { dec: None, ff: Some(ff) });
         }
@@ -179,7 +187,17 @@ impl H264Decoder {
     pub fn decode(&mut self, data: &[u8], rgba: &mut Vec<u8>) -> Result<Option<(u32, u32)>> {
         #[cfg(feature = "ffmpeg")]
         if let Some(ff) = &mut self.ff {
-            return ff.decode(data, rgba);
+            match ff.decode(data, rgba) {
+                Ok(r) => return Ok(r),
+                // The GPU decoder failed (driver, unsupported stream): carry on on the CPU. The
+                // frame is lost; the receiver asks for a keyframe.
+                Err(e) if ff.gpu.is_some() => {
+                    eprintln!("kall video: {} decoding failed ({e:#}); decoding on the CPU", ff.gpu.unwrap_or("GPU"));
+                    *ff = super::ff::FfDecoder::new(false)?;
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            }
         }
         let Some(dec) = self.dec.as_mut() else { return Ok(None) };
         let Some(img) = dec.decode(data).map_err(|e| anyhow!("decode: {e}"))? else { return Ok(None) };

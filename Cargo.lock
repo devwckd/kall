@@ -3058,6 +3058,7 @@ dependencies = [
  "ffmpeg-next",
  "hex",
  "image",
+ "kall-hwaccel",
  "kall-proto",
  "keyring",
  "nnnoiseless",
@@ -3077,6 +3078,13 @@ dependencies = [
  "windows-capture",
  "winresource",
  "xcap",
+]
+
+[[package]]
+name = "kall-hwaccel"
+version = "0.3.1"
+dependencies = [
+ "ffmpeg-next",
 ]
 
 [[package]]
