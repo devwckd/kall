@@ -100,7 +100,7 @@ Download the installer for your system from the
 | --- | --- |
 | Windows | `kall_x.y.z_x64-setup.exe` (per-user, no admin needed) |
 | macOS | `.dmg` (Apple Silicon and Intel) |
-| Linux | `.AppImage` or `.deb` |
+| Linux | `.AppImage` or `.deb` (a 2024 or newer distro: Ubuntu 24.04, Debian 13, Fedora 40) |
 
 The builds aren't code-signed yet:
 
