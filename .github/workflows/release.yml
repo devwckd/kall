@@ -71,10 +71,6 @@ jobs:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD || '' }}
         run: cargo packager --release -p kall -f ${{ matrix.formats }}
 
-      - name: Note the platform
-        shell: bash
-        run: echo "${{ matrix.platform }}" > target/dist/PLATFORM-${{ matrix.platform }}
-
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.platform }}
@@ -88,6 +84,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+          # Only the installers: the Docker job uploads its own build record too.
+          pattern: dist-*
       - name: Write latest.json
         run: python3 scripts/latest_json.py artifacts "${GITHUB_REF_NAME}" "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" > latest.json
       - name: Release
@@ -108,6 +106,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           push: true
