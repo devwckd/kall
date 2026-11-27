@@ -59,7 +59,7 @@ fn register(invite: &str, user: &str) -> C2S {
 async fn chat_and_moderation_round_trip() -> Result<()> {
     let dir = tempfile::tempdir()?;
     let identity = kall_server::tls::self_signed(dir.path(), &[])?;
-    let server = Server::start(Db::open(&dir.path().join("kall.db"))?, "Test".into(), "127.0.0.1:0".parse()?, identity)?;
+    let server = Server::start(Db::open(&dir.path().join("kall.db"))?, "Test".into(), "127.0.0.1:0".parse()?, identity, kall_server::files::FileStore::defaults(dir.path().join("files")))?;
     let addr = server.endpoint.local_addr()?.to_string();
     let owner_invite = server.owner_invite.clone().expect("fresh server has an owner invite");
     tokio::spawn(async move { server.run().await });
@@ -82,10 +82,10 @@ async fn chat_and_moderation_round_trip() -> Result<()> {
 
     // Chat: send, receive, reply, edit, mention counts, delete.
     let general = owner.snap.channels.iter().find(|c| c.kind == ChannelKind::Text).unwrap().id;
-    owner.send(C2S::SendMessage { channel: general, body: "hello **@mira**".into(), reply_to: None }).await?;
+    owner.send(C2S::SendMessage { channel: general, body: "hello **@mira**".into(), reply_to: None, attachments: vec![] }).await?;
     let first = mira.expect(|m| if let S2C::MessageCreated(m) = m { Some(m) } else { None }).await?;
     assert_eq!(first.body, "hello **@mira**");
-    mira.send(C2S::SendMessage { channel: general, body: "hi!".into(), reply_to: Some(first.id) }).await?;
+    mira.send(C2S::SendMessage { channel: general, body: "hi!".into(), reply_to: Some(first.id), attachments: vec![] }).await?;
     let reply = owner.expect(|m| if let S2C::MessageCreated(m) = m { m.reply_to.is_some().then_some(m) } else { None }).await?;
     assert_eq!(reply.reply_to, Some(first.id));
 

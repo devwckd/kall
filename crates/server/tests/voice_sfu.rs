@@ -58,7 +58,7 @@ async fn join(addr: &str, invite: &str, name: &str) -> Result<Client> {
 async fn start() -> Result<(tempfile::TempDir, String, String)> {
     let dir = tempfile::tempdir()?;
     let id = kall_server::tls::self_signed(dir.path(), &[])?;
-    let server = Server::start(Db::open(&dir.path().join("kall.db"))?, "T".into(), "127.0.0.1:0".parse()?, id)?;
+    let server = Server::start(Db::open(&dir.path().join("kall.db"))?, "T".into(), "127.0.0.1:0".parse()?, id, kall_server::files::FileStore::defaults(dir.path().join("files")))?;
     let addr = server.endpoint.local_addr()?.to_string();
     let invite = server.owner_invite.clone().unwrap();
     tokio::spawn(async move { server.run().await });

@@ -19,7 +19,9 @@ Everything uses one UDP port (default `7744`), with the ALPN `kall/1`.
 - **Control stream** (bidirectional, opened first): length-prefixed postcard messages (`C2S` /
   `S2C` in `crates/proto/src/lib.rs`). It carries auth, chat, presence, moderation, and
   voice/video signalling.
-- **Extra streams**, one per transfer: avatar uploads and downloads.
+- **Extra streams**, one per file transfer: an upload or a download of a file shared in chat
+  (`crates/proto/src/files.rs`), so a big file never holds up the control stream. Closing the
+  stream cancels the transfer.
 - **Datagrams** (RFC 9221): media, sent without retransmission.
   - **Voice:** one 20 ms Opus frame (48 kHz mono) per datagram, `[kind][seq][flags][opus]`.
     The server prefixes the speaker's id and forwards the datagram without decoding it.

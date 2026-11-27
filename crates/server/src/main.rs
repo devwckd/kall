@@ -44,6 +44,8 @@ struct Args {
     ipv6: bool,
     uses: Option<u32>,
     hours: Option<u32>,
+    max_file_mb: u64,
+    file_days: u32,
 }
 
 fn truthy(v: Option<String>) -> Option<bool> {
@@ -65,6 +67,8 @@ fn args() -> Result<Args> {
         ipv6: truthy(env("KALL_DDNS_IPV6")).unwrap_or(false),
         uses: Some(1),
         hours: Some(24 * 7),
+        max_file_mb: env("KALL_MAX_FILE_MB").map(|v| v.parse()).transpose().context("bad KALL_MAX_FILE_MB")?.unwrap_or(100),
+        file_days: env("KALL_FILE_DAYS").map(|v| v.parse()).transpose().context("bad KALL_FILE_DAYS")?.unwrap_or(30),
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -167,7 +171,8 @@ async fn main() -> Result<()> {
     }
 
     let db = Db::open(&a.data.join("kall.db"))?;
-    let server = kall_server::Server::start(db, a.name, a.bind, identity)?;
+    let files = kall_server::files::FileStore::new(a.data.join("files"), a.max_file_mb * 1_000_000, a.file_days);
+    let server = kall_server::Server::start(db, a.name, a.bind, identity, files)?;
     if let Some(acme) = acme {
         tokio::spawn(kall_server::acme::renew_forever(acme, server.endpoint.clone(), real));
     }

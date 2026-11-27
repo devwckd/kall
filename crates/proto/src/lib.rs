@@ -3,17 +3,19 @@
 //!
 //! One QUIC connection per client. The client opens one bidirectional stream first (the
 //! control stream) and every [`C2S`]/[`S2C`] message travels on it as a frame:
-//! `u32 little-endian length` + postcard bytes. Media (voice, video) will use QUIC datagrams.
+//! `u32 little-endian length` + postcard bytes. Media (voice, video) uses QUIC datagrams, and
+//! each file transfer its own stream ([`files`]).
 
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "client")]
 pub mod client;
+pub mod files;
 pub mod video;
 pub mod voice;
 
 pub const ALPN: &[u8] = b"kall/1";
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const DEFAULT_PORT: u16 = 7744;
 /// Largest control frame either side accepts (avatars travel inline).
 pub const MAX_FRAME: usize = 2 * 1024 * 1024;
@@ -147,6 +149,7 @@ pub struct Message {
     pub created: Millis,
     pub edited: Option<Millis>,
     pub preview: Option<Preview>,
+    pub attachments: Vec<files::Attachment>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -201,6 +204,7 @@ pub struct Snapshot {
     pub read: Vec<ReadState>,
     pub voice: Vec<VoiceMember>,
     pub streams: Vec<(Id, StreamInfo)>,
+    pub files: files::FileLimits,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -214,7 +218,9 @@ pub enum C2S {
     /// End this session and forget its token.
     Logout,
 
-    SendMessage { channel: Id, body: String, reply_to: Option<Id> },
+    /// `attachments`: ids from uploads on transfer streams (see [`files`]). The body may be
+    /// empty when there are attachments.
+    SendMessage { channel: Id, body: String, reply_to: Option<Id>, attachments: Vec<Id> },
     EditMessage { id: Id, body: String },
     DeleteMessage { id: Id },
     /// Messages older than `before` (newest first when None), up to `limit`.

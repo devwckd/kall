@@ -4,6 +4,7 @@ pub mod acme;
 pub mod cloudflare;
 pub mod db;
 pub mod ddns;
+pub mod files;
 pub mod hub;
 pub mod preview;
 pub mod tls;
@@ -26,7 +27,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn start(db: Db, name: String, bind: SocketAddr, identity: Identity) -> Result<Server> {
+    pub fn start(db: Db, name: String, bind: SocketAddr, identity: Identity, files: files::FileStore) -> Result<Server> {
         rustls::crypto::ring::default_provider().install_default().ok();
         let owner_invite = if db.user_count()? == 0 {
             let code = match db.has_owner_invite()? {
@@ -41,10 +42,12 @@ impl Server {
         let fingerprint = identity.fingerprint();
         let endpoint = quinn::Endpoint::server(tls::server_config(identity)?, bind)?;
         tracing::info!("{name} listening on udp {}", endpoint.local_addr()?);
-        Ok(Server { endpoint, hub: Arc::new(Hub::new(db, name)), owner_invite, fingerprint })
+        let hub = Arc::new(Hub::new(db, name, files));
+        Ok(Server { endpoint, hub, owner_invite, fingerprint })
     }
 
     pub async fn run(&self) {
+        self.hub.start_file_janitor();
         while let Some(incoming) = self.endpoint.accept().await {
             let hub = self.hub.clone();
             tokio::spawn(async move {

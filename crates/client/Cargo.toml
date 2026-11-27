@@ -30,6 +30,9 @@ openh264 = "0.9"
 nokhwa = { version = "0.10", features = ["input-native"] }
 auto-launch = "0.6"
 cargo-packager-updater = "0.2"
+# Downloads folder and cache paths; open a downloaded file or show it in its folder.
+dirs = "6"
+opener = { version = "0.8", features = ["reveal"] }
 
 # Screen capture on macOS/Linux, and the share picker's thumbnails everywhere.
 xcap = "0.9"

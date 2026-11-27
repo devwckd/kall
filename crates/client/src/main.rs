@@ -12,6 +12,7 @@
 
 mod demo;
 mod desktop;
+mod files;
 mod media;
 mod icons;
 mod model;
@@ -99,6 +100,8 @@ pub struct State {
     pub toast: Option<(String, f64)>,
     /// The toast is about this person's new screen share: it gets a Watch button.
     pub toast_watch: Option<Id>,
+    /// Files: uploads for the next message, downloads, previews, players.
+    pub files: files::Files,
     /// The right-click microphone/speakers panel, when open.
     pub audio_menu: Option<crate::ui::audio_menu::Open>,
     pub now: f64,
@@ -162,6 +165,7 @@ impl Default for State {
             toast: None,
             toast_watch: None,
             audio_menu: None,
+            files: Default::default(),
             now: 0.0,
             last_typing: -10.0,
             voice: VoicePrefs::default(),
@@ -363,14 +367,20 @@ impl State {
 
     pub fn send_draft(&mut self, tx: &mut Tx) {
         let body = self.draft.text.trim().to_string();
-        if body.is_empty() {
+        if self.editing.is_none() && self.uploads_busy() {
+            self.toast("Still uploading: the message goes once the files are up.");
+            return;
+        }
+        let files_ready = self.editing.is_none() && self.files.pending.iter().any(|p| matches!(p.state, files::Up::Ready(_)));
+        if body.is_empty() && !files_ready {
             return;
         }
         match self.editing.take() {
             Some(id) => self.send(C2S::EditMessage { id, body }),
             None => {
                 let reply_to = self.reply_to.take();
-                self.send(C2S::SendMessage { channel: self.channel, body, reply_to });
+                let attachments = self.take_attachments();
+                self.send(C2S::SendMessage { channel: self.channel, body, reply_to, attachments });
                 self.divider = None;
                 tx.scroll_to_bottom("messages");
             }
@@ -399,8 +409,18 @@ impl State {
             NetEvent::Connecting { server, attempt } => {
                 self.phase = if self.m.is_some() { Phase::Reconnecting { retry_in: 0 } } else { Phase::Connecting { server, attempt } };
             }
-            NetEvent::Disconnected { retry_in } => self.phase = Phase::Reconnecting { retry_in },
+            NetEvent::Disconnected { retry_in } => {
+                self.phase = Phase::Reconnecting { retry_in };
+                self.transfers_lost();
+            }
+            NetEvent::Progress { job, done, total } => self.on_transfer_progress(job, done, total),
+            NetEvent::Uploaded { job, attachment } => self.on_uploaded(job, attachment),
+            NetEvent::Downloaded { job, path } => self.on_downloaded(job, path),
+            NetEvent::TransferFailed { job, error } => self.on_transfer_failed(job, error),
+            NetEvent::Thumb { file, w, h, rgba } => self.on_thumb(file, w, h, rgba),
             NetEvent::LoggedOut { reason, pin_mismatch } => {
+                self.transfers_lost();
+                self.files.pending.clear();
                 self.m = None;
                 self.settings = None;
                 self.phase = Phase::Login;
@@ -731,6 +751,11 @@ fn poll(s: &mut State, t: f64, tx: &mut Tx) -> bool {
         s.updating = false;
         s.toast(format!("Update failed: {e}"));
         changed = true;
+    }
+    s.want_visible_thumbs();
+    // Inline audio/video: redraw a few times a second for the time and progress bar.
+    if s.playing() {
+        tx.wake_after(Duration::from_millis(250));
     }
     // Expire the toast and typing indicators, waking when the next one is due.
     if let Some((_, until)) = s.toast {

@@ -42,7 +42,7 @@ async fn issues_a_certificate_and_hot_swaps_it() -> Result<()> {
 
     // A server running on its self-signed certificate picks the new one up without restarting.
     let selfsigned = tls::self_signed(dir.path(), &[])?;
-    let server = Server::start(Db::memory()?, "T".into(), "127.0.0.1:0".parse()?, selfsigned)?;
+    let server = Server::start(Db::memory()?, "T".into(), "127.0.0.1:0".parse()?, selfsigned, kall_server::files::FileStore::defaults(std::env::temp_dir().join("kall-acme-test-files")))?;
     let addr = server.endpoint.local_addr()?.to_string();
     let endpoint = server.endpoint.clone();
     tokio::spawn(async move { server.run().await });
