@@ -51,7 +51,10 @@ jobs:
         with:
           toolchain: "1.99.1"
 
+      # Same key as ci.yml, whose runs on main keep it warm (a tag can't read another tag's cache).
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: client
 
       - name: Check the tag matches the version
         shell: bash
