@@ -1,5 +1,6 @@
 """Make the Windows installer carry FFmpeg's DLLs: list the ones build.rs copied next to
-kall.exe as cargo-packager resources, installed next to kall.exe.
+kall.exe as cargo-packager resources, installed next to kall.exe (each target is the
+file name: NSIS writes it with `File /oname=<target>`, which needs a file, not a folder).
 
 usage: bundle_ffmpeg.py <crates/client/Cargo.toml>
 
@@ -18,7 +19,7 @@ def main() -> None:
     found = sorted(p.name for p in release.glob("*.dll") if p.name.split("-")[0] in DLLS)
     if len(found) != len(DLLS):
         sys.exit(f"expected {len(DLLS)} FFmpeg DLLs in {release}, found {found}")
-    entries = ", ".join(f'{{ src = "../../target/release/{name}", target = "." }}' for name in found)
+    entries = ", ".join(f'{{ src = "../../target/release/{name}", target = "{name}" }}' for name in found)
     text = manifest.read_text(encoding="utf-8")
     anchor = 'binaries = [{ path = "kall", main = true }]'
     if anchor not in text:
