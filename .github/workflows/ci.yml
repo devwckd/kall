@@ -13,6 +13,7 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
       - ".github/workflows/**"
+      - "Dockerfile"
   workflow_dispatch:
 
 concurrency:
@@ -91,3 +92,16 @@ jobs:
         if: runner.os == 'Linux'
         # kall-hwaccel needs FFmpeg; it's built (and tested) through kall's ffmpeg features.
         run: cargo test --release --workspace --exclude kall-hwaccel
+
+  # The server's Docker image builds (not pushed): catches a broken Dockerfile before a release.
+  server-image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
