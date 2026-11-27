@@ -2,13 +2,15 @@
 //! watch. Lives beside the voice engine and starts and stops with it.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, channel};
 
 use kall_proto::{C2S, Id, StreamInfo, StreamKind};
 
 use crate::State;
 use crate::net::NetCmd;
-use crate::video::capture::{self, Capture, Source};
+use crate::video::capture::{self, Capture, Source, SourceKind, Thumbs};
 use crate::video::recv::Incoming;
 use crate::video::send::Outgoing;
 use crate::video::{CAMERA_QUALITY, QUALITIES, camera, share_audio};
@@ -30,6 +32,41 @@ pub struct Picker {
     pub selected: Option<String>,
     pub quality: usize,
     pub audio: bool,
+    /// Which tab is showing: screens or windows.
+    pub tab: SourceKind,
+    pub thumbs: Thumbs,
+    /// Bumped by the thumbnail thread; compared to redraw.
+    fresh: Arc<AtomicU64>,
+    seen: u64,
+    /// Stops the thumbnail thread when the picker closes.
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Picker {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Picker {
+    pub fn new(sources: Option<Vec<Source>>) -> Picker {
+        Picker {
+            selected: sources.as_ref().and_then(|ss| ss.first()).map(|s| s.id.clone()),
+            sources,
+            quality: 1,
+            audio: share_audio::supported(),
+            tab: SourceKind::Display,
+            thumbs: Default::default(),
+            fresh: Default::default(),
+            seen: 0,
+            stop: Default::default(),
+        }
+    }
+
+    /// The selected source, if any.
+    pub fn source(&self) -> Option<&Source> {
+        self.sources.as_ref()?.iter().find(|s| Some(&s.id) == self.selected.as_ref())
+    }
 }
 
 #[derive(Default)]
@@ -88,23 +125,25 @@ impl State {
             }
         });
         self.media.sources_rx = Some(rx);
-        self.media.picker = Some(Picker { sources: None, selected: None, quality: 1, audio: share_audio::supported() });
+        self.media.picker = Some(Picker::new(None));
     }
 
     pub fn start_share(&mut self) {
         let (Some(net), Some(p)) = (&self.net, &self.media.picker) else { return };
-        let Some(source) = p.sources.as_ref().and_then(|ss| ss.iter().find(|s| Some(&s.id) == p.selected.as_ref())).cloned() else { return };
+        let Some(source) = p.source().cloned() else { return };
         let q = QUALITIES[p.quality.min(QUALITIES.len() - 1)];
         let wake = self.waker.clone().expect("waker");
         let out = Outgoing::start(StreamKind::Screen, q, net.voice.clone(), wake.clone());
         let (slot, link, want_audio) = (out.slot.clone(), net.voice.clone(), p.audio);
-        let info = StreamInfo { kind: StreamKind::Screen, width: q.max_w as u32, height: q.max_h as u32, fps: q.fps, audio: want_audio, label: source.name.clone() };
+        let info = StreamInfo { kind: StreamKind::Screen, width: q.max_w as u32, height: q.max_h as u32, fps: q.fps, audio: want_audio, label: if source.kind == SourceKind::Window && !source.detail.is_empty() { source.detail.clone() } else { source.name.clone() } };
         let (tx, rx) = channel();
         // Starting capture and system audio can take a moment: off the UI thread.
         std::thread::spawn(move || {
             let r = capture::start(&source, q.fps, slot).map_err(|e| anyhow::anyhow!("Couldn't capture {}: {e:#}", source.name)).map(|cap| {
                 let (audio, warn) = if want_audio {
-                    match share_audio::start(link) {
+                    // A window shares only its app's sound; a screen, everything but kall.
+                    let app = if source.kind == SourceKind::Window { source.pid } else { None };
+                    match share_audio::start(link, app) {
                         Ok(a) => (Some(a), None),
                         Err(e) => (None, Some(format!("Sharing without sound: {e:#}"))),
                     }
@@ -170,10 +209,20 @@ impl State {
         {
             if let Some(p) = &mut self.media.picker {
                 p.selected = list.first().map(|s| s.id.clone());
+                if let Some(w) = self.waker.clone() {
+                    capture::thumbnails(list.clone(), p.thumbs.clone(), p.fresh.clone(), p.stop.clone(), w);
+                }
                 p.sources = Some(list);
             }
             self.media.sources_rx = None;
             changed = true;
+        }
+        if let Some(p) = &mut self.media.picker {
+            let fresh = p.fresh.load(Ordering::Relaxed);
+            if fresh != p.seen {
+                p.seen = fresh;
+                changed = true;
+            }
         }
         if let Some((_, rx)) = &self.media.camera_starting
             && let Ok(r) = rx.try_recv()

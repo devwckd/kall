@@ -50,6 +50,8 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.toast = Some(("Mira started sharing Visual Studio Code".into(), 1e9));
         s.toast_watch = Some(2);
     }),
+    ("share-screens", |s| share_picker(s, crate::video::capture::SourceKind::Display)),
+    ("share-windows", |s| share_picker(s, crate::video::capture::SourceKind::Window)),
     ("voice-settings", |s| {
         load(s, 1);
         crate::ui::settings::open(s, Tab::Voice);
@@ -86,6 +88,37 @@ fn now() -> i64 {
 
 fn user(id: i64, name: &str, display: &str, role: Role, status: Status, text: &str, online: bool) -> User {
     User { id, username: name.into(), display_name: display.into(), role, status, status_text: text.into(), online, avatar_rev: 0 }
+}
+
+/// The share picker over a call, with made-up sources and drawn thumbnails (never the real
+/// screens or windows of the machine taking the snapshot).
+fn share_picker(s: &mut State, tab: crate::video::capture::SourceKind) {
+    use crate::video::capture::{Source, SourceKind};
+    load(s, 3);
+    let src = |id: &str, name: &str, detail: &str, kind: SourceKind| Source { id: id.into(), name: name.into(), detail: detail.into(), kind, pid: None };
+    let sources = vec![
+        src("d:1", "Display 1", "2560×1440", SourceKind::Display),
+        src("d:2", "Display 2", "1920×1080", SourceKind::Display),
+        src("w:1", "main.rs — kall", "Code", SourceKind::Window),
+        src("w:2", "Pasta recipes — Browser", "Browser", SourceKind::Window),
+        src("w:3", "Lo-fi beats", "Music", SourceKind::Window),
+        src("w:4", "Dungeon Crawler", "Game", SourceKind::Window),
+        src("w:5", "Notes", "Notes", SourceKind::Window),
+    ];
+    let mut pk = crate::media::Picker::new(Some(sources));
+    {
+        let mut t = pk.thumbs.lock().unwrap();
+        t.insert("d:1".into(), fake_screen(400, 225));
+        t.insert("d:2".into(), fake_camera(400, 225));
+        t.insert("w:1".into(), fake_screen(400, 250));
+        t.insert("w:2".into(), fake_camera(400, 260));
+        t.insert("w:4".into(), fake_camera(400, 225));
+    }
+    pk.tab = tab.clone();
+    if tab == SourceKind::Window {
+        pk.selected = Some("w:2".into());
+    }
+    s.media.picker = Some(pk);
 }
 
 /// A stand-in for a shared window: a dark editor with coloured lines of "code".

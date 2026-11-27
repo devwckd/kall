@@ -18,8 +18,13 @@ pub enum SourceKind {
 pub struct Source {
     /// "d:<n>" for displays, "w:<id>" for windows.
     pub id: String,
+    /// The window's title, or "Display 1".
     pub name: String,
+    /// The app that owns the window, or the display's resolution.
+    pub detail: String,
     pub kind: SourceKind,
+    /// The window's process, so its sound can be shared on its own.
+    pub pid: Option<u32>,
 }
 
 /// Dropping this stops the capture.
@@ -83,10 +88,10 @@ mod imp {
             for (i, m) in ms.iter().enumerate() {
                 let idx = m.index().unwrap_or(i + 1);
                 let size = match (m.width(), m.height()) {
-                    (Ok(w), Ok(h)) => format!(" · {w}×{h}"),
+                    (Ok(w), Ok(h)) => format!("{w}×{h}"),
                     _ => String::new(),
                 };
-                out.push(Source { id: format!("d:{idx}"), name: format!("Display {}{size}", i + 1), kind: SourceKind::Display });
+                out.push(Source { id: format!("d:{idx}"), name: format!("Display {}", i + 1), detail: size, kind: SourceKind::Display, pid: None });
             }
         }
         let me = std::process::id();
@@ -96,9 +101,8 @@ mod imp {
                 if title.trim().is_empty() || !w.is_valid() || w.process_id().is_ok_and(|p| p == me) {
                     continue;
                 }
-                let app = w.process_name().unwrap_or_default();
-                let name = if app.is_empty() { title } else { format!("{title} — {}", app.trim_end_matches(".exe")) };
-                out.push(Source { id: format!("w:{}", w.as_raw_hwnd() as usize), name, kind: SourceKind::Window });
+                let app = w.process_name().unwrap_or_default().trim_end_matches(".exe").to_string();
+                out.push(Source { id: format!("w:{}", w.as_raw_hwnd() as usize), name: title, detail: app, kind: SourceKind::Window, pid: w.process_id().ok() });
             }
         }
         out
@@ -149,7 +153,11 @@ mod imp {
         let mut out = Vec::new();
         for (i, m) in xcap::Monitor::all().unwrap_or_default().iter().enumerate() {
             if let Ok(id) = m.id() {
-                out.push(Source { id: format!("d:{id}"), name: m.name().unwrap_or_else(|_| format!("Display {}", i + 1)), kind: SourceKind::Display });
+                let size = match (m.width(), m.height()) {
+                    (Ok(w), Ok(h)) => format!("{w}×{h}"),
+                    _ => String::new(),
+                };
+                out.push(Source { id: format!("d:{id}"), name: m.name().unwrap_or_else(|_| format!("Display {}", i + 1)), detail: size, kind: SourceKind::Display, pid: None });
             }
         }
         for w in xcap::Window::all().unwrap_or_default() {
@@ -157,8 +165,7 @@ mod imp {
             if title.trim().is_empty() || w.is_minimized().unwrap_or(false) || w.pid().is_ok_and(|p| p == std::process::id()) {
                 continue;
             }
-            let app = w.app_name().unwrap_or_default();
-            out.push(Source { id: format!("w:{id}"), name: if app.is_empty() { title } else { format!("{title} — {app}") }, kind: SourceKind::Window });
+            out.push(Source { id: format!("w:{id}"), name: title, detail: w.app_name().unwrap_or_default(), kind: SourceKind::Window, pid: w.pid().ok() });
         }
         out
     }
@@ -205,4 +212,85 @@ pub fn list() -> Vec<Source> {
 
 pub fn start(source: &Source, fps: u32, slot: Arc<Slot>) -> Result<Capture> {
     imp::start(source, fps, slot).map(Capture)
+}
+
+/// The share picker's thumbnails, by source id.
+pub type Thumbs = Arc<std::sync::Mutex<std::collections::HashMap<String, rune::Pixels>>>;
+
+/// Keep `thumbs` filled with small pictures of `sources`, refreshed every couple of seconds,
+/// until `stop` is set. Uses xcap's one-shot capture on every platform (cheap, no stream).
+pub fn thumbnails(sources: Vec<Source>, thumbs: Thumbs, fresh: Arc<std::sync::atomic::AtomicU64>, stop: Arc<std::sync::atomic::AtomicBool>, wake: rune::Waker) {
+    use std::sync::atomic::Ordering;
+    std::thread::Builder::new()
+        .name("kall-thumbs".into())
+        .spawn(move || {
+            while !stop.load(Ordering::Relaxed) {
+                let monitors = xcap::Monitor::all().unwrap_or_default();
+                let windows = xcap::Window::all().unwrap_or_default();
+                let mut display_n = 0;
+                for src in &sources {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let n = src.id.split_once(':').and_then(|(_, n)| n.parse::<u64>().ok());
+                    let img = match src.kind {
+                        SourceKind::Display => {
+                            display_n += 1;
+                            // Windows numbers displays itself; elsewhere the id is xcap's.
+                            let m = if cfg!(windows) { monitors.get(display_n - 1) } else { monitors.iter().find(|m| m.id().ok().map(u64::from) == n) };
+                            m.and_then(|m| m.capture_image().ok())
+                        }
+                        SourceKind::Window => windows.iter().find(|w| w.id().ok().map(u64::from) == n.map(|n| n & 0xFFFF_FFFF)).and_then(|w| w.capture_image().ok()),
+                    };
+                    let Some(img) = img else { continue };
+                    let (w, h) = (img.width() as usize, img.height() as usize);
+                    if w < 2 || h < 2 {
+                        continue;
+                    }
+                    // fit_bgra only moves bytes around, so it scales RGBA just as well.
+                    let (small, tw, th) = super::codec::fit_bgra(img.as_raw(), w, h, w * 4, 400, 225);
+                    let px = thumbs.lock().unwrap().entry(src.id.clone()).or_default().clone();
+                    px.replace(tw as u32, th as u32, small);
+                    fresh.fetch_add(1, Ordering::Relaxed);
+                    wake();
+                }
+                for _ in 0..20 {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        })
+        .ok();
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+    /// Real capture on this machine: lists sources and fills thumbnails. Prints counts only, so
+    /// nothing on screen is saved. `cargo test -p kall thumbnails_fill -- --ignored`
+    #[test]
+    #[ignore = "captures the real screen"]
+    fn thumbnails_fill() {
+        let sources = super::list();
+        let (displays, windows) = (sources.iter().filter(|s| s.kind == super::SourceKind::Display).count(), sources.iter().filter(|s| s.kind == super::SourceKind::Window).count());
+        let with_pid = sources.iter().filter(|s| s.pid.is_some()).count();
+        println!("{displays} displays, {windows} windows ({with_pid} with a process id)");
+        assert!(displays > 0);
+        let thumbs: super::Thumbs = Default::default();
+        let fresh = Arc::new(AtomicU64::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+        super::thumbnails(sources.clone(), thumbs.clone(), fresh.clone(), stop.clone(), Arc::new(|| {}));
+        let t = std::time::Instant::now();
+        while fresh.load(Ordering::Relaxed) < sources.len() as u64 && t.elapsed().as_secs() < 15 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        stop.store(true, Ordering::Relaxed);
+        let got = thumbs.lock().unwrap().len();
+        println!("{got}/{} thumbnails in {:.1}s", sources.len(), t.elapsed().as_secs_f64());
+        assert!(thumbs.lock().unwrap().keys().any(|k| k.starts_with("d:")), "every display gets a thumbnail");
+    }
 }

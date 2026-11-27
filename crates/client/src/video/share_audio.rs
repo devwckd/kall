@@ -1,6 +1,8 @@
-//! The sound that goes with a screen share: everything the PC plays except kall itself (so
-//! friends don't hear their own voices back), as Opus in voice packets flagged as share audio.
-//! Windows uses WASAPI process loopback; other platforms don't have it yet.
+//! The sound that goes with a screen share, as Opus in voice packets flagged as share audio:
+//! for a window, only its app's sound (that process and its children, so a browser's audio
+//! process counts); for a whole screen, everything the PC plays except kall itself (so friends
+//! don't hear their own voices back). Windows uses WASAPI process loopback; other platforms
+//! don't have it yet.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,8 +24,9 @@ pub fn supported() -> bool {
     cfg!(windows)
 }
 
+/// `app`: share only this process's sound (and its children's); `None` for everything but kall.
 #[cfg(windows)]
-pub fn start(link: Arc<VoiceLink>) -> Result<Running> {
+pub fn start(link: Arc<VoiceLink>, app: Option<u32>) -> Result<Running> {
     use std::collections::VecDeque;
     use std::sync::mpsc::channel;
 
@@ -39,8 +42,12 @@ pub fn start(link: Arc<VoiceLink>) -> Result<Running> {
         let run = || -> Result<()> {
             initialize_mta().ok().map_err(|e| anyhow!("COM: {e:?}"))?;
             let fmt = WaveFormat::new(32, 32, SampleType::Float, 48_000, 2, None);
-            // Everything except our own process tree.
-            let mut client = AudioClient::new_application_loopback_client(std::process::id(), false).map_err(|e| anyhow!("loopback: {e}"))?;
+            // One app's process tree, or everything except ours.
+            let (pid, include) = match app {
+                Some(pid) => (pid, true),
+                None => (std::process::id(), false),
+            };
+            let mut client = AudioClient::new_application_loopback_client(pid, include).map_err(|e| anyhow!("loopback: {e}"))?;
             client
                 .initialize_client(&fmt, Direction::Capture, StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 }, None)
                 .map_err(|e| anyhow!("loopback: {e}"))?;
@@ -80,6 +87,27 @@ pub fn start(link: Arc<VoiceLink>) -> Result<Running> {
 }
 
 #[cfg(not(windows))]
-pub fn start(_link: Arc<VoiceLink>) -> Result<Running> {
+pub fn start(_link: Arc<VoiceLink>, _app: Option<u32>) -> Result<Running> {
     anyhow::bail!("Sharing system audio isn't supported on this platform yet.")
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    /// Windows accepts a loopback capture of one app's process tree (what sharing a window's
+    /// sound uses). `cargo test -p kall window_sound_capture_opens -- --ignored`
+    #[test]
+    #[ignore = "uses the real audio stack"]
+    fn window_sound_capture_opens() {
+        use wasapi::{AudioClient, Direction, SampleType, StreamMode, WaveFormat, initialize_mta};
+        initialize_mta().ok().unwrap();
+        // Any other running process will do: explorer is always there.
+        let out = std::process::Command::new("tasklist").args(["/FI", "IMAGENAME eq explorer.exe", "/FO", "CSV", "/NH"]).output().unwrap();
+        let line = String::from_utf8_lossy(&out.stdout);
+        let pid: u32 = line.split(',').nth(1).unwrap().trim_matches('"').parse().unwrap();
+        let fmt = WaveFormat::new(32, 32, SampleType::Float, 48_000, 2, None);
+        let mut client = AudioClient::new_application_loopback_client(pid, true).unwrap();
+        client.initialize_client(&fmt, Direction::Capture, StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 }, None).unwrap();
+        client.start_stream().unwrap();
+        client.stop_stream().unwrap();
+    }
 }
