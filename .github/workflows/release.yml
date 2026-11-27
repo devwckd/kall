@@ -3,7 +3,7 @@
 # Release with latest.json for kall's auto-updater. Also pushes the server image to GHCR.
 #
 # Secrets: CARGO_PACKAGER_SIGN_PRIVATE_KEY (contents of kall-updater.key),
-#          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD (empty if the key has none).
+#          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD (only if the key has a password; leave it unset otherwise).
 name: release
 
 on:
@@ -71,7 +71,7 @@ jobs:
       - name: Package and sign
         env:
           CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
-          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD || '' }}
         run: cargo packager --release -p kall -f ${{ matrix.formats }}
 
       - name: Note the platform

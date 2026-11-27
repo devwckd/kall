@@ -170,11 +170,11 @@ CI then:
 - publishes a GitHub Release with the `latest.json` update manifest;
 - pushes the server image to `ghcr.io/<owner>/<repo>-server`.
 
-The workflow needs two repository secrets:
+The workflow uses these repository secrets:
 
 - `CARGO_PACKAGER_SIGN_PRIVATE_KEY`: the minisign private key whose public half is
   [`crates/client/updater.pub`](crates/client/updater.pub).
-- `CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD`: its password (empty if it has none).
+- `CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD`: its password. Only needed if the key has one; GitHub won't save an empty secret, so otherwise leave it out.
 
 Installed clients only accept updates signed with that key, so keep a backup of it. Forks should
 generate their own key with `cargo packager signer generate` and replace `updater.pub`.
