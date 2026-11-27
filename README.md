@@ -73,9 +73,11 @@ The server stores everything in SQLite and forwards media between clients withou
 You need a machine that stays on, one forwarded UDP port, and ideally a domain on Cloudflare.
 
 ```sh
-cd deploy
-cp .env.example .env      # set KALL_NAME, KALL_DOMAIN and CF_API_TOKEN
-docker compose up -d --build
+mkdir kall && cd kall
+curl -fsSLO https://raw.githubusercontent.com/devwckd/kall/main/deploy/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/devwckd/kall/main/deploy/.env.example -o .env
+nano .env                 # set KALL_NAME, KALL_DOMAIN and CF_API_TOKEN
+docker compose up -d
 docker compose logs kall  # the first start prints the owner's invite code
 ```
 

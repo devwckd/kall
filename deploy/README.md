@@ -22,10 +22,15 @@ Forward **UDP 7744** to the Linux box. TCP isn't needed.
 
 ## 3. Run it
 
+The server only needs two files from this folder: `compose.yaml` and `.env.example`. It runs the
+published image (`ghcr.io/devwckd/kall-server`), so there's nothing to build.
+
 ```sh
-cd deploy
-cp .env.example .env    # fill in KALL_DOMAIN and CF_API_TOKEN; leave KALL_ACME_STAGING=1 at first
-docker compose up -d --build
+mkdir kall && cd kall
+curl -fsSLO https://raw.githubusercontent.com/devwckd/kall/main/deploy/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/devwckd/kall/main/deploy/.env.example -o .env
+nano .env               # fill in KALL_DOMAIN and CF_API_TOKEN; leave KALL_ACME_STAGING=1 at first
+docker compose up -d
 docker compose logs -f kall
 ```
 
@@ -50,6 +55,7 @@ docker compose exec kall kall-server invite --uses 1 --hours 168
 ```sh
 docker compose exec kall kall-server ddns    # update the A record now, print the IP
 docker compose exec kall kall-server cert    # check/renew the certificate now
+docker compose pull && docker compose up -d  # update to the latest release
 docker compose down                          # stop (data stays in the kall-data volume)
 ```
 
