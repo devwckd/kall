@@ -30,6 +30,9 @@ nokhwa = { version = "0.10", features = ["input-native"] }
 auto-launch = "0.6"
 cargo-packager-updater = "0.2"
 
+[build-dependencies]
+winresource = "0.1"
+
 [target."cfg(windows)".dependencies]
 wasapi = "0.27"
 windows-capture = "2"

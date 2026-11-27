@@ -731,6 +731,10 @@ fn is_headless() -> bool {
 fn main() {
     if !is_headless() {
         desktop::register_notifications();
+        // The ghost on the window, the taskbar and Alt+Tab (the tray sets its own).
+        if let Err(e) = desktop::icon_png(256).map_err(|e| e.to_string()).and_then(rune::set_app_icon) {
+            eprintln!("kall: app icon: {e}");
+        }
     }
     let app = rune::App::new(AppSpec::<State> {
         min_size: Some((960.0, 600.0)),
