@@ -2,7 +2,7 @@
 
 Each release's section here is also the top of its GitHub release notes.
 
-## Unreleased
+## v0.3.2
 
 ### New
 - **Screen share on AMD and Intel GPUs on Linux** (VAAPI), alongside NVIDIA. The Linux packages now need libva, which desktop distros already have. (#30)
