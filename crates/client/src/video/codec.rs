@@ -1,5 +1,7 @@
-//! H.264 through OpenH264 (software, all platforms). Kept behind two small types so hardware
-//! encoders (NVENC, AMF, Media Foundation, VideoToolbox) can be slotted in later.
+//! H.264 for screen share and camera, behind two small types. With the `ffmpeg` feature the
+//! encoder uses the GPU (NVENC, AMF, Quick Sync, VideoToolbox: see [`super::ff`]) and the
+//! decoder FFmpeg's; otherwise, or when no hardware encoder opens, OpenH264 (software, all
+//! platforms). `KALL_SOFTWARE_VIDEO=1` forces OpenH264. Both make the same Annex-B stream.
 
 use anyhow::{Result, anyhow};
 use openh264::OpenH264API;
@@ -8,7 +10,12 @@ use openh264::encoder::{BitRate, Complexity, Encoder, EncoderConfig, FrameRate, 
 use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
 
 pub struct H264Encoder {
-    enc: Encoder,
+    enc: Option<Encoder>,
+    #[cfg(feature = "ffmpeg")]
+    hw: Option<super::ff::HwEncoder>,
+    /// Why the hardware encoder isn't used (logged once).
+    #[cfg(feature = "ffmpeg")]
+    hw_error: Option<String>,
     width: usize,
     height: usize,
     fps: u32,
@@ -39,9 +46,64 @@ fn make(fps: u32, bitrate: u32, screen: bool) -> Result<Encoder> {
     Encoder::with_api_config(OpenH264API::from_source(), cfg).map_err(|e| anyhow!("H.264 encoder: {e}"))
 }
 
+/// Hardware video is off (`KALL_SOFTWARE_VIDEO=1`).
+fn software_only() -> bool {
+    std::env::var("KALL_SOFTWARE_VIDEO").is_ok_and(|v| v == "1")
+}
+
 impl H264Encoder {
     pub fn new(fps: u32, bitrate: u32, screen: bool) -> Result<H264Encoder> {
-        Ok(H264Encoder { enc: make(fps, bitrate, screen)?, width: 0, height: 0, fps, bitrate, screen, force_key: true, timing: (0.0, 0.0) })
+        Ok(H264Encoder {
+            enc: None,
+            #[cfg(feature = "ffmpeg")]
+            hw: None,
+            #[cfg(feature = "ffmpeg")]
+            hw_error: None,
+            width: 0,
+            height: 0,
+            fps,
+            bitrate,
+            screen,
+            force_key: true,
+            timing: (0.0, 0.0),
+        })
+    }
+
+    /// What's encoding: "NVENC", "AMF", "Quick Sync", "VideoToolbox" or "OpenH264".
+    pub fn backend(&self) -> &'static str {
+        #[cfg(feature = "ffmpeg")]
+        if let Some(h) = &self.hw {
+            return h.name;
+        }
+        "OpenH264"
+    }
+
+    /// Open an encoder for a new frame size: hardware first, OpenH264 otherwise.
+    fn reopen(&mut self, width: usize, height: usize) -> Result<()> {
+        self.width = width;
+        self.height = height;
+        self.force_key = true;
+        #[cfg(feature = "ffmpeg")]
+        {
+            self.hw = None;
+            if !software_only() && self.hw_error.is_none() {
+                match super::ff::HwEncoder::open(width, height, self.fps, self.bitrate) {
+                    Ok(h) => {
+                        eprintln!("kall video: encoding with {}", h.name);
+                        self.hw = Some(h);
+                        self.enc = None;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        eprintln!("kall video: {e:#}; using OpenH264");
+                        self.hw_error = Some(e.to_string());
+                    }
+                }
+            }
+        }
+        let _ = software_only();
+        self.enc = Some(make(self.fps, self.bitrate, self.screen)?);
+        Ok(())
     }
 
     pub fn request_keyframe(&mut self) {
@@ -53,18 +115,35 @@ impl H264Encoder {
     pub fn encode(&mut self, bgra: &[u8], width: usize, height: usize) -> Result<Option<(Vec<u8>, bool)>> {
         if (width, height) != (self.width, self.height) {
             // A new size (window resized): start a fresh stream.
-            self.enc = make(self.fps, self.bitrate, self.screen)?;
-            self.width = width;
-            self.height = height;
-            self.force_key = true;
+            self.reopen(width, height)?;
         }
+        #[cfg(feature = "ffmpeg")]
+        if let Some(hw) = &mut self.hw {
+            let key = std::mem::take(&mut self.force_key);
+            match hw.encode(bgra, key) {
+                Ok((timing, out)) => {
+                    self.timing = timing;
+                    return Ok(out.filter(|(d, _)| !d.is_empty()));
+                }
+                Err(e) => {
+                    // A GPU encoder that fails mid-stream (driver reset, session limit): fall
+                    // back to OpenH264 for the rest of this share.
+                    eprintln!("kall video: {} failed ({e:#}); switching to OpenH264", hw.name);
+                    self.hw = None;
+                    self.hw_error = Some(e.to_string());
+                    self.enc = Some(make(self.fps, self.bitrate, self.screen)?);
+                    self.force_key = true;
+                }
+            }
+        }
+        let Some(enc) = self.enc.as_mut() else { return Ok(None) };
         let t0 = std::time::Instant::now();
         let yuv = YUVBuffer::from_bgra8_source(BgraSliceU8::new(bgra, (width, height)));
         let t1 = std::time::Instant::now();
         if std::mem::take(&mut self.force_key) {
-            self.enc.force_intra_frame();
+            enc.force_intra_frame();
         }
-        let bits = self.enc.encode(&yuv).map_err(|e| anyhow!("encode: {e}"))?;
+        let bits = enc.encode(&yuv).map_err(|e| anyhow!("encode: {e}"))?;
         self.timing = ((t1 - t0).as_secs_f64(), t1.elapsed().as_secs_f64());
         let key = matches!(bits.frame_type(), FrameType::IDR | FrameType::I);
         if matches!(bits.frame_type(), FrameType::Skip | FrameType::Invalid) {
@@ -76,17 +155,34 @@ impl H264Encoder {
 }
 
 pub struct H264Decoder {
-    dec: Decoder,
+    dec: Option<Decoder>,
+    #[cfg(feature = "ffmpeg")]
+    ff: Option<super::ff::FfDecoder>,
 }
 
 impl H264Decoder {
     pub fn new() -> Result<H264Decoder> {
-        Ok(H264Decoder { dec: Decoder::new().map_err(|e| anyhow!("H.264 decoder: {e}"))? })
+        #[cfg(feature = "ffmpeg")]
+        if !software_only()
+            && let Ok(ff) = super::ff::FfDecoder::new()
+        {
+            return Ok(H264Decoder { dec: None, ff: Some(ff) });
+        }
+        Ok(H264Decoder {
+            dec: Some(Decoder::new().map_err(|e| anyhow!("H.264 decoder: {e}"))?),
+            #[cfg(feature = "ffmpeg")]
+            ff: None,
+        })
     }
 
     /// Decode one frame into `rgba` (resized as needed); returns its size.
     pub fn decode(&mut self, data: &[u8], rgba: &mut Vec<u8>) -> Result<Option<(u32, u32)>> {
-        let Some(img) = self.dec.decode(data).map_err(|e| anyhow!("decode: {e}"))? else { return Ok(None) };
+        #[cfg(feature = "ffmpeg")]
+        if let Some(ff) = &mut self.ff {
+            return ff.decode(data, rgba);
+        }
+        let Some(dec) = self.dec.as_mut() else { return Ok(None) };
+        let Some(img) = dec.decode(data).map_err(|e| anyhow!("decode: {e}"))? else { return Ok(None) };
         let (w, h) = img.dimensions();
         rgba.resize(w * h * 4, 0);
         img.write_rgba8(rgba);
@@ -173,8 +269,10 @@ mod tests {
                 assert_eq!((dw, dh), (w as u32, h as u32));
             }
         }
-        assert_eq!(keys.first(), Some(&(0, true)), "starts with a keyframe");
-        assert!(keys.iter().any(|&(t, k)| t == 10 && k), "keyframe on request");
+        println!("encoder: {} keys {:?}", enc.backend(), keys);
+        // GPU encoders may hand a frame back one call late.
+        assert!(keys.first().is_some_and(|&(t, k)| t <= 1 && k), "starts with a keyframe");
+        assert!(keys.iter().any(|&(t, k)| (10..=11).contains(&t) && k), "keyframe on request");
         assert!(keys.iter().filter(|(_, k)| !k).count() > 10, "mostly predicted frames");
         // The checkerboard survived: red channel (index 0 in RGBA) high in the first square.
         assert!(rgba[0] > 150, "decoded red {}", rgba[0]);

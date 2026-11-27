@@ -4,6 +4,8 @@
 pub mod camera;
 pub mod capture;
 pub mod codec;
+#[cfg(feature = "ffmpeg")]
+pub mod ff;
 pub mod recv;
 pub mod send;
 pub mod share_audio;

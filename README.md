@@ -121,6 +121,11 @@ You need the Rust toolchain pinned in [`rust-toolchain.toml`](rust-toolchain.tom
 picks it up), plus CMake and NASM for the media codecs. On Linux, you also need the
 development packages listed in [`.github/workflows/release.yml`](.github/workflows/release.yml).
 
+Hardware video encoding is the optional `ffmpeg` feature: `cargo build -p kall --features ffmpeg`.
+It needs FFmpeg 9 development files (for Windows, BtbN's `win64-lgpl-shared` build) in
+`FFMPEG_DIR`, and libclang in `LIBCLANG_PATH`. On Windows, the build copies FFmpeg's DLLs next to
+`kall.exe`. Without the feature, kall encodes on the CPU with OpenH264.
+
 ```sh
 cargo run -p kall-server -- --name "My Server"   # prints the owner invite on first run
 cargo run -p kall                                # then Create account → paste the invite
