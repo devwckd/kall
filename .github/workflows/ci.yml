@@ -14,7 +14,14 @@ on:
       - "rust-toolchain.toml"
       - ".github/workflows/**"
       - "Dockerfile"
+  # Run by hand on a branch to also get its Linux AppImage and .deb as downloads (for testing
+  # on Linux before merging).
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Build the Linux test packages as this version (e.g. an older one, to test updating). Empty: the real version."
+        required: false
+        default: ""
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -80,6 +87,10 @@ jobs:
         with:
           shared-key: client
 
+      - name: Test packages as another version
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.version != ''
+        run: sed -i '0,/^version = ".*"/s//version = "${{ inputs.version }}"/' Cargo.toml
+
       - name: Build
         shell: bash
         run: cargo build --release -p kall $KALL_FEATURES
@@ -92,6 +103,20 @@ jobs:
         if: runner.os == 'Linux'
         # kall-hwaccel needs FFmpeg; it's built (and tested) through kall's ffmpeg features.
         run: cargo test --release --workspace --exclude kall-hwaccel
+
+      # Unsigned test packages; they still check for updates like a release does.
+      - name: Linux test packages
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch'
+        run: cargo packager --release -p kall -f appimage,deb
+
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch'
+        with:
+          name: kall-linux-test
+          path: |
+            target/dist/*.AppImage
+            target/dist/*.deb
+          retention-days: 14
 
   # The server's Docker image builds (not pushed): catches a broken Dockerfile before a release.
   server-image:
