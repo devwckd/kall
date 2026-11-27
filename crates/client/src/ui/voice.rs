@@ -252,6 +252,7 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
     let screen = m.streams.contains_key(&(u, StreamKind::Screen)) || (u == m.me && s.media.sharing.is_some());
     // Over video the name sits on a dark pill; on a plain tile, on the panel colour.
     let on_video = m.streams.contains_key(&(u, StreamKind::Camera)) || (u == m.me && s.media.camera.is_some());
+    let on_video = on_video || screen;
     let (pill, pill_text) = if on_video { (oklcha(0.1, 0.0, 0.0, 0.55), oklch(0.97, 0.0, 0.0)) } else { (p.panel, p.text) };
     let mut name = row().gap(6.0).center_y().px(9.0).h(24.0).radius(6.0).fill(pill);
     if v.deafened {
@@ -276,19 +277,44 @@ fn tile(s: &State, m: &Model, v: &VoiceMember, face: f32) -> El {
             }
         });
     let cam = (m.streams.contains_key(&(u, StreamKind::Camera)) || (u == m.me && s.media.camera.is_some())).then(|| s.stream_pixels(u, StreamKind::Camera)).flatten();
-    t = match cam {
-        Some(px) => t.fill(oklch(0.08, 0.0, 0.0)).child(el().key("cam").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).pixels_fit(&px, SurfaceFit::Fill)),
-        None => t.child(avatar(m, u, face, false)),
-    };
-    t = t.child(name.pin(Some(10.0), None, None, Some(10.0)));
+    // Video stops short of the edge while they talk, so the speaking ring stays visible.
+    let inset = if talking { 2.5 } else { 0.0 };
     if screen {
+        // A screen share takes over the tile: its live preview, a Watch button, and the
+        // camera (if on) as a small picture in the corner.
+        t = t.fill(oklch(0.12, 0.0, 0.0));
+        t = match s.stream_preview(u) {
+            Some(px) => t.child(el().key("screen").pin(Some(inset), Some(inset), Some(inset), Some(inset)).pixels_fit(&px, SurfaceFit::Fit)),
+            None => t.child(glyph(&icons::SCREEN, 40.0, oklcha(1.0, 0.0, 0.0, 0.35))),
+        };
+        if let Some(px) = cam {
+            t = t.child(el().key("cam").w(112.0).h(63.0).radius(8.0).clip_rounded(8.0).border(1.5, oklcha(1.0, 0.0, 0.0, 0.25)).pixels_fit(&px, SurfaceFit::Fill).pin(Some(10.0), Some(10.0), None, None));
+        }
+        let cta = if u == m.me { "You're sharing" } else { "Watch stream" };
+        let pill = row()
+            .key("watch")
+            .gap(8.0)
+            .center_y()
+            .px(14.0)
+            .h(36.0)
+            .radius(18.0)
+            .fill(if u == m.me { oklcha(0.1, 0.0, 0.0, 0.6) } else { p.accent })
+            .child(glyph(&icons::SCREEN, 16.0, if u == m.me { oklch(0.97, 0.0, 0.0) } else { p.on_accent }))
+            .child(text(cta).font(type_::TITLE).color(if u == m.me { oklch(0.97, 0.0, 0.0) } else { p.on_accent }));
         t = t
+            .child(row().key("watch-row").pin(Some(0.0), Some(0.0), Some(0.0), Some(0.0)).center().child(pill))
             .child(badge("LIVE", p.red).pin(None, None, Some(10.0), Some(10.0)))
             .role("button")
             .label(format!("Watch {}'s screen", m.name(u)))
             .hover_border(p.ink(0.3))
             .on_press(move |s: &mut State| s.focus_stream(Some(u)));
+    } else {
+        t = match cam {
+            Some(px) => t.fill(oklch(0.08, 0.0, 0.0)).child(el().key("cam").pin(Some(inset), Some(inset), Some(inset), Some(inset)).radius(12.0).clip_rounded(12.0).pixels_fit(&px, SurfaceFit::Fill)),
+            None => t.child(avatar(m, u, face, false)),
+        };
     }
+    t = t.child(name.pin(Some(10.0), None, None, Some(10.0)));
     if talking {
         t = t.border(2.5, p.accent);
     }

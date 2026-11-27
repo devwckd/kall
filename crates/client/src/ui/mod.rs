@@ -302,7 +302,8 @@ fn with_toast(s: &State, root: El) -> El {
     }
     if let Some((msg, _)) = &s.toast {
         layers = layers.child(
-            row().key("toast").pin(Some(0.0), None, Some(0.0), Some(24.0)).justify_center().child(
+            // At the top, under the header: the bottom has the call controls and the composer.
+            row().key("toast").pin(Some(0.0), Some(68.0), Some(0.0), None).justify_center().child(
                 row()
                     .key("toast-pill")
                     .role("button")
@@ -317,6 +318,7 @@ fn with_toast(s: &State, root: El) -> El {
                     .shadow(8.0, 24.0, oklcha(0.0, 0.0, 0.0, 0.25))
                     .transition(rune::Transition::offset(0.0, 16.0).combined(rune::Transition::opacity()))
                     .child(text(msg.clone()).font(type_::BODY).color(p.text).wrap())
+                    .children(s.toast_watch.map(|u| button("toast-watch", "Watch", 1).h(30.0).on_press(move |s: &mut State| s.watch_stream(u))))
                     .on_press(|s: &mut State| s.toast = None),
             ),
         );

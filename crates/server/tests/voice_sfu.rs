@@ -170,7 +170,8 @@ impl Client {
     }
 }
 
-/// Video and share audio reach only the people watching; streams end with the call.
+/// Video and share audio reach only the people watching (previews reach everyone in the call);
+/// streams end with the call.
 #[tokio::test(flavor = "multi_thread")]
 async fn video_goes_only_to_watchers() -> Result<()> {
     use kall_proto::video;
@@ -201,6 +202,16 @@ async fn video_goes_only_to_watchers() -> Result<()> {
     let w = Duration::from_millis(300);
     send_frame(&a, 1);
     assert!(b.datagrams(w).await.is_empty(), "nobody is watching yet");
+
+    // Previews go to everyone else in the call, watching or not.
+    for d in video::fragment(StreamKind::Screen, 1, video::FLAG_KEYFRAME | video::FLAG_PREVIEW, &[9u8; 1500]) {
+        a.c.conn.send_datagram(d.into())?;
+    }
+    let (pb, pc) = tokio::join!(b.datagrams(w), c.datagrams(w));
+    for got in [&pb, &pc] {
+        let preview = got.iter().filter_map(|d| video::decode_down(d)).any(|(u, f)| u as i64 == ana && f.flags & video::FLAG_PREVIEW != 0);
+        assert!(preview, "everyone in the call gets the preview");
+    }
 
     // Bob starts watching: Ana is asked for a keyframe, then Bob (only) gets the fragments.
     b.send(C2S::WatchStream { user: ana, kind: StreamKind::Screen, watch: true }).await?;

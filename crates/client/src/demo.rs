@@ -1,7 +1,7 @@
 //! Demo data for headless snapshots (`--snap … --scene chat`), so the UI can be checked
 //! without a server.
 
-use kall_proto::{Channel, ChannelKind, Message, Preview, ReadState, Role, Snapshot, Status, User, VoiceMember};
+use kall_proto::{Channel, ChannelKind, Message, Preview, ReadState, Role, Snapshot, Status, StreamInfo, StreamKind, User, VoiceMember};
 
 use crate::model::Model;
 use crate::{State, Tab};
@@ -33,6 +33,22 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         s.speaking = [1, 2].into_iter().collect();
         s.hover_tile = Some(2);
         s.voice.volumes.insert("kai".into(), 0.6);
+    }),
+    ("stream", |s| {
+        // Mira shares a window (a drawn stand-in, not a real capture), Kai has a camera on,
+        // and the "started sharing" toast is up.
+        load(s, 3);
+        if let Some(m) = &mut s.m {
+            m.voice.insert(1, VoiceMember { user: 1, channel: 3, muted: false, deafened: false });
+            m.streams.insert((2, StreamKind::Screen), StreamInfo { kind: StreamKind::Screen, width: 1920, height: 1080, fps: 30, audio: true, label: "Visual Studio Code".into() });
+            m.streams.insert((4, StreamKind::Camera), StreamInfo { kind: StreamKind::Camera, width: 1280, height: 720, fps: 30, audio: false, label: "Camera".into() });
+        }
+        s.voice_channel = Some(3);
+        s.speaking = [2].into_iter().collect();
+        s.media.demo.insert((2, StreamKind::Screen), fake_screen(480, 270));
+        s.media.demo.insert((4, StreamKind::Camera), fake_camera(320, 180));
+        s.toast = Some(("Mira started sharing Visual Studio Code".into(), 1e9));
+        s.toast_watch = Some(2);
     }),
     ("voice-settings", |s| {
         load(s, 1);
@@ -70,6 +86,47 @@ fn now() -> i64 {
 
 fn user(id: i64, name: &str, display: &str, role: Role, status: Status, text: &str, online: bool) -> User {
     User { id, username: name.into(), display_name: display.into(), role, status, status_text: text.into(), online, avatar_rev: 0 }
+}
+
+/// A stand-in for a shared window: a dark editor with coloured lines of "code".
+pub fn fake_screen(w: u32, h: u32) -> rune::Pixels {
+    let mut rgba = vec![0u8; (w * h * 4) as usize];
+    let lines: &[(u32, u32, [u8; 3])] = &[(2, 18, [197, 134, 192]), (4, 30, [156, 220, 254]), (4, 22, [206, 145, 120]), (6, 34, [220, 220, 170]), (6, 12, [106, 153, 85]), (4, 26, [156, 220, 254]), (2, 8, [197, 134, 192])];
+    for y in 0..h {
+        for x in 0..w {
+            let o = ((y * w + x) * 4) as usize;
+            let mut c = if x < w / 6 { [37, 37, 38] } else { [30, 30, 30] };
+            if y < h / 14 {
+                c = [50, 50, 52];
+            }
+            let row = y.saturating_sub(h / 9) / (h / 22).max(1);
+            if x >= w / 6 && y > h / 9 && (y - h / 9) % (h / 22).max(1) < (h / 44).max(1) {
+                let (indent, len, col) = lines[row as usize % lines.len()];
+                let x0 = w / 6 + w / 40 + indent * w / 120;
+                if x >= x0 && x < x0 + len * w / 70 {
+                    c = col;
+                }
+            }
+            rgba[o..o + 4].copy_from_slice(&[c[0], c[1], c[2], 255]);
+        }
+    }
+    let px = rune::Pixels::new();
+    px.replace(w, h, rgba);
+    px
+}
+
+/// A stand-in for a webcam: a soft blue-to-amber gradient.
+pub fn fake_camera(w: u32, h: u32) -> rune::Pixels {
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let t = (x + y) as f32 / (w + h) as f32;
+            rgba.extend([(60.0 + 150.0 * t) as u8, (80.0 + 60.0 * t) as u8, (140.0 - 80.0 * t) as u8, 255]);
+        }
+    }
+    let px = rune::Pixels::new();
+    px.replace(w, h, rgba);
+    px
 }
 
 fn load(s: &mut State, channel: i64) {

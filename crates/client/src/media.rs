@@ -1,7 +1,7 @@
 //! Screen share and camera in a call: what we send, what we receive, and which streams we
 //! watch. Lives beside the voice engine and starts and stops with it.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, channel};
 
 use kall_proto::{C2S, Id, StreamInfo, StreamKind};
@@ -47,6 +47,8 @@ pub struct Media {
     sources_rx: Option<Receiver<Vec<Source>>>,
     /// Bumped by the video threads on every new frame, so the UI knows to redraw.
     seen: u64,
+    /// Pictures for the headless demo scenes, in place of decoded video.
+    pub demo: HashMap<(Id, StreamKind), rune::Pixels>,
 }
 
 impl State {
@@ -254,6 +256,20 @@ impl State {
                 StreamKind::Camera => self.media.camera.as_ref().map(|c| c.out.preview.clone()),
             };
         }
+        if let Some(px) = self.media.demo.get(&(user, kind)) {
+            return Some(px.clone());
+        }
         self.media.rx.as_ref()?.frames.lock().unwrap().get(&(user, kind)).cloned()
+    }
+
+    /// A small, recent picture of `user`'s screen share for their tile: the full stream when
+    /// we're watching it, otherwise the once-a-second preview everyone in the call gets.
+    pub fn stream_preview(&self, user: Id) -> Option<rune::Pixels> {
+        if let Some(px) = self.stream_pixels(user, StreamKind::Screen)
+            && (self.m.as_ref().is_some_and(|m| m.me == user) || self.media.watching.contains(&(user, StreamKind::Screen)) || self.media.demo.contains_key(&(user, StreamKind::Screen)))
+        {
+            return Some(px);
+        }
+        self.media.rx.as_ref()?.previews.lock().unwrap().get(&(user, StreamKind::Screen)).cloned()
     }
 }

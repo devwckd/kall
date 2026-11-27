@@ -6,6 +6,11 @@
 //! ```
 //! A frame is usable only when every fragment arrives; a receiver that loses one drops the
 //! frame and asks for a keyframe. The server forwards fragments only to people watching.
+//!
+//! A screen share also sends a preview: about once a second, a small frame that decodes on its
+//! own ([`FLAG_PREVIEW`] | [`FLAG_KEYFRAME`]), with its own frame numbers. The server forwards
+//! previews to everyone in the sender's voice channel, so their tiles show what's being shared
+//! before anyone watches.
 
 use std::collections::BTreeMap;
 
@@ -15,6 +20,8 @@ pub const KIND_VIDEO: u8 = 2;
 /// Payload bytes per fragment: fits a 1200-byte QUIC datagram with room to spare.
 pub const FRAGMENT: usize = 1100;
 pub const FLAG_KEYFRAME: u8 = 1;
+/// A low-rate thumbnail frame, for everyone in the call (not just watchers).
+pub const FLAG_PREVIEW: u8 = 2;
 /// Frames bigger than this are refused (a 4K keyframe at high quality fits easily).
 pub const MAX_FRAGMENTS: usize = 2048;
 

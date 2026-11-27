@@ -25,7 +25,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use kall_proto::{C2S, ChannelKind, Id, S2C, Status};
+use kall_proto::{C2S, ChannelKind, Id, S2C, Status, StreamKind};
 use rune::{AppSpec, TextEdit, Tx};
 
 use crate::model::Model;
@@ -93,6 +93,8 @@ pub struct State {
     pub confirm_ban: Option<Id>,
     pub settings: Option<Settings>,
     pub toast: Option<(String, f64)>,
+    /// The toast is about this person's new screen share: it gets a Watch button.
+    pub toast_watch: Option<Id>,
     pub now: f64,
     last_typing: f64,
     pub voice: VoicePrefs,
@@ -152,6 +154,7 @@ impl Default for State {
             confirm_ban: None,
             settings: None,
             toast: None,
+            toast_watch: None,
             now: 0.0,
             last_typing: -10.0,
             voice: VoicePrefs::default(),
@@ -190,6 +193,17 @@ impl State {
 
     pub fn toast(&mut self, msg: impl Into<String>) {
         self.toast = Some((msg.into(), self.now + 5.0));
+        self.toast_watch = None;
+    }
+
+    /// Jump to `user`'s screen share: open the call's channel and put it on the stage.
+    pub fn watch_stream(&mut self, user: Id) {
+        if let Some(ch) = self.m.as_ref().and_then(|m| m.voice.get(&user)).map(|v| v.channel) {
+            self.select_channel(ch);
+        }
+        self.focus_stream(Some(user));
+        self.toast = None;
+        self.toast_watch = None;
     }
 
     pub fn connect(&mut self) {
@@ -420,7 +434,7 @@ impl State {
                 }
             }
             NetEvent::Msg(msg) => {
-                let Some(m) = &mut self.m else { return };
+                let Some(m) = &self.m else { return };
                 if let S2C::VoiceUpdated { user, state } = &msg {
                     let mine = m.voice.get(&m.me).map(|v| v.channel);
                     let before = m.voice.get(user).cloned();
@@ -446,6 +460,25 @@ impl State {
                         } else if was && !is {
                             self.play(Cue::Leave);
                         }
+                    }
+                }
+                // Someone in our call started sharing: say so, with a sound.
+                if let Some(m) = &self.m
+                    && let S2C::StreamUpdated { user, kind, info: Some(info) } = &msg
+                    && *user != m.me
+                    && !m.streams.contains_key(&(*user, *kind))
+                    && let Some(mine) = m.voice.get(&m.me).map(|v| v.channel)
+                    && m.voice.get(user).is_some_and(|v| v.channel == mine)
+                {
+                    let name = m.name(*user).to_string();
+                    let (user, kind, label) = (*user, *kind, info.label.clone());
+                    self.play(Cue::Stream);
+                    match kind {
+                        StreamKind::Screen => {
+                            self.toast(if label.is_empty() { format!("{name} started sharing their screen") } else { format!("{name} started sharing {label}") });
+                            self.toast_watch = Some(user);
+                        }
+                        StreamKind::Camera => self.toast(format!("{name} turned on their camera")),
                     }
                 }
                 if let S2C::MessageCreated(msg) = &msg {
@@ -573,6 +606,7 @@ impl State {
         let err = self.shared.error.lock().unwrap().take();
         if let Some(e) = err {
             self.toast = Some((e, self.now + 8.0));
+            self.toast_watch = None;
             changed = true;
         }
         changed
