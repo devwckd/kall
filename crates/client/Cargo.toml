@@ -43,6 +43,8 @@ xcap = "0.9"
 
 [features]
 ffmpeg = ["dep:ffmpeg-next"]
+# macOS/Linux release builds: FFmpeg linked statically (scripts/build_ffmpeg.sh), nothing to bundle.
+ffmpeg-static = ["ffmpeg", "ffmpeg-next/static"]
 
 [build-dependencies]
 winresource = "0.1"

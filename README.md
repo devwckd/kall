@@ -124,7 +124,9 @@ development packages listed in [`.github/workflows/release.yml`](.github/workflo
 Hardware video encoding is the optional `ffmpeg` feature: `cargo build -p kall --features ffmpeg`.
 It needs FFmpeg 9 development files (for Windows, BtbN's `win64-lgpl-shared` build) in
 `FFMPEG_DIR`, and libclang in `LIBCLANG_PATH`. On Windows, the build copies FFmpeg's DLLs next to
-`kall.exe`. Without the feature, kall encodes on the CPU with OpenH264.
+`kall.exe`. On macOS and Linux, build a small static FFmpeg instead (`scripts/build_ffmpeg.sh <dir>`,
+which takes a few minutes) and use `PKG_CONFIG_PATH=<dir>/lib/pkgconfig cargo build -p kall
+--features ffmpeg-static`. Without either feature, kall encodes on the CPU with OpenH264.
 
 ```sh
 cargo run -p kall-server -- --name "My Server"   # prints the owner invite on first run
