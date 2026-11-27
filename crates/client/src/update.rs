@@ -33,12 +33,57 @@ pub fn check_at(url: &str) -> Result<Option<Update>> {
     UpdaterBuilder::new(current, config).build().map_err(|e| anyhow!("{e}"))?.check().map_err(|e| anyhow!("{e}"))
 }
 
+/// Where people download kall by hand when the self-update can't run.
+pub const DOWNLOADS: &str = "https://github.com/devwckd/kall/releases/latest";
+
+/// Can this copy of kall replace itself? Checked before hanging up for an update, so a
+/// self-update that can't work says why instead of restarting the old version.
+pub fn preflight() -> Result<()> {
+    if cfg!(target_os = "linux") {
+        return appimage_preflight();
+    }
+    Ok(())
+}
+
+/// The AppImage the user started (the runtime sets `APPIMAGE`); kall's own executable lives
+/// inside its read-only mount and can't be replaced.
+fn appimage() -> Option<std::path::PathBuf> {
+    std::env::var_os("APPIMAGE").filter(|p| !p.is_empty()).map(std::path::PathBuf::from)
+}
+
+fn appimage_preflight() -> Result<()> {
+    let Some(file) = appimage() else {
+        return Err(anyhow!(
+            "only the AppImage updates itself. Download the new version, or with the .deb,              install the new .deb"
+        ));
+    };
+    let dir = file.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+    // The updater moves the old AppImage aside and writes the new one in its place, so both
+    // the file and its folder must be writable.
+    let file_ok = std::fs::OpenOptions::new().append(true).open(&file).is_ok();
+    let probe = dir.join(format!(".kall-update-{}", std::process::id()));
+    let dir_ok = std::fs::write(&probe, b"").is_ok();
+    std::fs::remove_file(&probe).ok();
+    if !file_ok || !dir_ok {
+        return Err(anyhow!(
+            "no permission to replace {}. Move kall to a folder you own (like ~/Applications),              or download the new version",
+            file.display()
+        ));
+    }
+    Ok(())
+}
+
 /// Download, verify the signature, install, and restart (on Windows the installer restarts
 /// kall itself).
 pub fn install(update: &Update) -> Result<()> {
+    preflight()?;
     update.download_and_install().map_err(|e| anyhow!("{e}"))?;
     if !cfg!(windows) {
-        let exe = std::env::current_exe()?;
+        // An AppImage restarts from the (now replaced) file, not from the old image's mount.
+        let exe = match appimage() {
+            Some(file) => file,
+            None => std::env::current_exe()?,
+        };
         std::process::Command::new(exe).spawn()?;
     }
     std::process::exit(0);
