@@ -196,13 +196,13 @@ fn controls(s: &State, v: &VoiceMember) -> El {
         .radius(36.0)
         .fill(p.surface)
         .border(1.0, p.line)
-        .child(call_button("mic", if muted { &icons::MIC_OFF } else { &icons::MIC }, tone(muted, Tone::Danger), "Mute").on_press(move |s: &mut State| {
+        .child(super::audio_menu::mic(call_button("mic", if muted { &icons::MIC_OFF } else { &icons::MIC }, tone(muted, Tone::Danger), "Mute (right-click for devices and volume)").on_press(move |s: &mut State| {
             s.send(C2S::VoiceState { muted: !muted, deafened: deaf && !muted });
-        }))
-        .child(
-            call_button("deafen", if deaf { &icons::HEADPHONES_OFF } else { &icons::HEADPHONES }, tone(deaf, Tone::Danger), "Deafen")
+        })))
+        .child(super::audio_menu::speakers(
+            call_button("deafen", if deaf { &icons::HEADPHONES_OFF } else { &icons::HEADPHONES }, tone(deaf, Tone::Danger), "Deafen (right-click for devices and volume)")
                 .on_press(move |s: &mut State| s.send(C2S::VoiceState { muted: !deaf || muted, deafened: !deaf })),
-        )
+        ))
         .child(call_button("camera", &icons::CAMERA, tone(cam_on, Tone::Active), "Camera").on_press(|s: &mut State| s.toggle_camera()))
         .child(call_button("share", &icons::SCREEN, tone(sharing, Tone::Active), "Share your screen").on_press(move |s: &mut State| {
             if sharing { s.stop_share() } else { s.open_share_picker() }

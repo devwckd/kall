@@ -97,6 +97,8 @@ pub struct State {
     pub toast: Option<(String, f64)>,
     /// The toast is about this person's new screen share: it gets a Watch button.
     pub toast_watch: Option<Id>,
+    /// The right-click microphone/speakers panel, when open.
+    pub audio_menu: Option<crate::ui::audio_menu::Open>,
     pub now: f64,
     last_typing: f64,
     pub voice: VoicePrefs,
@@ -157,6 +159,7 @@ impl Default for State {
             settings: None,
             toast: None,
             toast_watch: None,
+            audio_menu: None,
             now: 0.0,
             last_typing: -10.0,
             voice: VoicePrefs::default(),
@@ -582,6 +585,10 @@ impl State {
                 let wake = self.waker.clone().expect("waker");
                 let engine = Engine::start(net.voice.clone(), self.shared.clone(), self.voice.input.clone(), self.voice.output.clone(), wake);
                 self.engine = Some(RunningVoice { _engine: engine, input: self.voice.input.clone(), output: self.voice.output.clone() });
+                // So the right-click device menus have the list ready.
+                if self.devices.is_none() && self.devices_rx.is_none() {
+                    self.refresh_devices();
+                }
                 self.play(Cue::Join);
                 self.start_media();
             }
@@ -603,6 +610,8 @@ impl State {
                 noise_suppression: self.voice.noise_suppression,
                 echo_cancellation: self.voice.echo_cancellation,
                 bitrate,
+                input_gain: self.voice.input_volume,
+                output_gain: self.voice.output_volume,
             };
             *self.shared.ptt_key.lock().unwrap() = self.voice.ptt_key.clone();
             let vols = m.users.values().filter_map(|u| self.voice.volumes.get(&u.username).map(|v| (u.id as u32, *v))).collect();

@@ -329,6 +329,28 @@ fn device_list(key: &'static str, devices: Option<&[crate::voice::devices::Devic
     }
 }
 
+/// A volume stepper in 25% steps between `min` and `max` (also set from the mute/deafen
+/// right-click menus).
+fn volume_row(key: &'static str, title: &'static str, now: f32, min: f32, max: f32, pick: fn(&mut State) -> &mut f32) -> El {
+    let p = pal();
+    let step = move |s: &mut State, d: f32| {
+        let v = pick(s);
+        *v = ((*v + d) * 4.0).round() / 4.0;
+        *v = v.clamp(min, max);
+        s.save_voice();
+    };
+    row()
+        .key(key)
+        .gap(8.0)
+        .center_y()
+        .px(12.0)
+        .pt(4.0)
+        .child(text(title).font(type_::BODY).color(p.muted).w(120.0))
+        .child(round_button("down", &icons::DOWN, 28.0, false, p.muted, "Quieter").on_press(move |s: &mut State| step(s, -0.25)))
+        .child(text(format!("{:.0}%", now * 100.0)).font(type_::TITLE).color(p.text).w(52.0).center())
+        .child(round_button("up", &icons::UP, 28.0, false, p.muted, "Louder").on_press(move |s: &mut State| step(s, 0.25)))
+}
+
 fn toggle(key: &'static str, label: &'static str, hint: &'static str, on: bool, flip: fn(&mut State)) -> El {
     let p = pal();
     let knob = el().size(18.0, 18.0).radius(9.0).fill(oklch(0.98, 0.0, 0.0)).absolute(if on { 20.0 } else { 2.0 }, 2.0).motion(super::SOFT);
@@ -461,11 +483,13 @@ fn voice_tab(s: &State) -> El {
             s.voice.input = id;
             s.save_voice();
         }))
+        .child(volume_row("mic-vol", "Mic volume", v.input_volume, 0.5, 2.0, |s| &mut s.voice.input_volume))
         .child(label("SPEAKERS / HEADPHONES").pt(8.0))
         .child(device_list("out", devices.map(|d| d.outputs.as_slice()), &v.output, |s, id| {
             s.voice.output = id;
             s.save_voice();
         }))
+        .child(volume_row("out-vol", "Output volume", v.output_volume, 0.25, 2.0, |s| &mut s.voice.output_volume))
 }
 
 pub fn view(s: &State, m: &Model, set: &Settings) -> El {

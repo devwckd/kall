@@ -215,7 +215,8 @@ fn user_panel(s: &State, m: &Model) -> El {
         )
         .on_press(|s: &mut State| crate::ui::settings::open(s, crate::Tab::Profile));
     let in_voice = voice.is_some();
-    let mic = round_button("me-mic", if muted { &icons::MIC_OFF } else { &icons::MIC }, 32.0, false, if muted { p.red } else { p.muted }, "Mute")
+    // Right-click either for device and volume menus (in a call or not).
+    let mic = round_button("me-mic", if muted { &icons::MIC_OFF } else { &icons::MIC }, 32.0, false, if muted { p.red } else { p.muted }, "Mute (right-click for devices and volume)")
         .opacity(if in_voice { 1.0 } else { 0.5 })
         .on_press(move |s: &mut State| {
             if in_voice {
@@ -228,7 +229,7 @@ fn user_panel(s: &State, m: &Model) -> El {
         32.0,
         false,
         if deaf { p.red } else { p.muted },
-        "Deafen",
+        "Deafen (right-click for devices and volume)",
     )
     .opacity(if in_voice { 1.0 } else { 0.5 })
     .on_press(move |s: &mut State| {
@@ -236,6 +237,7 @@ fn user_panel(s: &State, m: &Model) -> El {
             s.send(C2S::VoiceState { muted: !deaf || muted, deafened: !deaf });
         }
     });
+    let (mic, deafen) = (super::audio_menu::mic(mic), super::audio_menu::speakers(deafen));
     row()
         .key("user-panel")
         .w_full()

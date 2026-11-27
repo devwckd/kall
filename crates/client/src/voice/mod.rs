@@ -27,6 +27,10 @@ pub struct VoicePrefs {
     pub volumes: BTreeMap<String, f32>,
     /// Camera to use (nokhwa index); the first one when unset.
     pub camera: Option<u32>,
+    /// How loud you are to others (1.0 = 100%), after noise suppression and auto gain.
+    pub input_volume: f32,
+    /// Master volume for everyone you hear (1.0 = 100%), on top of per-person volumes.
+    pub output_volume: f32,
 }
 
 impl Default for VoicePrefs {
@@ -41,6 +45,8 @@ impl Default for VoicePrefs {
             echo_cancellation: true,
             volumes: BTreeMap::new(),
             camera: None,
+            input_volume: 1.0,
+            output_volume: 1.0,
         }
     }
 }
