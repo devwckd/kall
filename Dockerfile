@@ -4,8 +4,9 @@ WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates/proto crates/proto
 COPY crates/server crates/server
-# The server doesn't need the desktop client (or Rune): drop it from the workspace.
-RUN sed -i -e 's/, "crates\/client"//g' -e '/^rune/d' -e '/^\[patch.crates-io\]/,$d' Cargo.toml
+# The server needs only proto and server: rewrite the workspace to just those (not the client,
+# Rune or the FFmpeg wrapper), so new client-side crates never break this build.
+RUN sed -i -e 's/^members = .*/members = ["crates\/proto", "crates\/server"]/'            -e 's/^default-members = .*/default-members = ["crates\/server"]/'            -e '/^rune/d' -e '/^\[patch.crates-io\]/,$d' Cargo.toml
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
     cargo build --release -p kall-server && cp target/release/kall-server /kall-server && mkdir /data-empty
