@@ -1,0 +1,57 @@
+[package]
+name = "kall"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+kall-proto = { workspace = true, features = ["client"] }
+rune.workspace = true
+rune-kit = { workspace = true, features = ["markdown"] }
+rune-notify.workspace = true
+anyhow.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+sha2.workspace = true
+hex.workspace = true
+serde.workspace = true
+keyring = { version = "3", features = ["windows-native", "apple-native", "sync-secret-service", "crypto-rust"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "ico"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+cpal = "0.18"
+opus = "0.4"
+nnnoiseless = "0.5"
+aec3 = "0.4"
+device_query = "4"
+openh264 = "0.9"
+nokhwa = { version = "0.10", features = ["input-native"] }
+auto-launch = "0.6"
+cargo-packager-updater = "0.2"
+
+[target."cfg(windows)".dependencies]
+wasapi = "0.27"
+windows-capture = "2"
+
+[target."cfg(not(windows))".dependencies]
+xcap = "0.9"
+
+# Installers: `cargo build --release -p kall && cargo packager --release -p kall -f <format>`
+# (nsis on Windows, dmg/app on macOS, appimage/deb on Linux). With
+# CARGO_PACKAGER_SIGN_PRIVATE_KEY set it also writes the signed update bundles.
+[package.metadata.packager]
+productName = "kall"
+identifier = "dev.kall.client"
+description = "Voice, video and chat for you and your friends"
+category = "SocialNetworking"
+publisher = "kall"
+outDir = "../../target/dist"
+icons = ["icons/32x32.png", "icons/128x128.png", "icons/256x256.png", "icons/512x512.png", "icons/icon.ico"]
+binaries = [{ path = "kall", main = true }]
+
+[package.metadata.packager.nsis]
+installMode = "currentUser"
+
+[package.metadata.packager.deb]
+depends = ["libasound2", "libxdo3"]

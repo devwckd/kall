@@ -1,0 +1,119 @@
+# Push a tag like v0.2.0 (after bumping `version` in Cargo.toml's [workspace.package]) to build
+# installers for Windows, macOS and Linux, sign the update bundles, and publish a GitHub
+# Release with latest.json for kall's auto-updater. Also pushes the server image to GHCR.
+#
+# Secrets: CARGO_PACKAGER_SIGN_PRIVATE_KEY (contents of kall-updater.key),
+#          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD (empty if the key has none).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  client:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            formats: nsis
+            platform: windows-x86_64
+          - os: macos-latest
+            formats: app,dmg
+            platform: darwin-aarch64
+          - os: macos-13
+            formats: app,dmg
+            platform: darwin-x86_64
+          - os: ubuntu-22.04
+            formats: appimage,deb
+            platform: linux-x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      # Baked into the client: where it looks for updates.
+      KALL_RELEASES: https://github.com/${{ github.repository }}/releases/latest/download/latest.json
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config cmake nasm libasound2-dev libdbus-1-dev libx11-dev libxi-dev libxtst-dev \
+            libxdo-dev libxcb1-dev libxrandr-dev libxkbcommon-dev libwayland-dev libpipewire-0.3-dev libclang-dev libgbm-dev
+
+      - name: macOS build dependencies
+        if: runner.os == 'macOS'
+        run: brew install nasm cmake
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.99.1"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check the tag matches the version
+        shell: bash
+        run: |
+          v=$(grep -m1 '^version' Cargo.toml | cut -d'"' -f2)
+          test "v$v" = "${GITHUB_REF_NAME}" || { echo "tag ${GITHUB_REF_NAME} != version v$v"; exit 1; }
+
+      - name: Build
+        run: cargo build --release -p kall
+
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked
+
+      - name: Package and sign
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
+        run: cargo packager --release -p kall -f ${{ matrix.formats }}
+
+      - name: Note the platform
+        shell: bash
+        run: echo "${{ matrix.platform }}" > target/dist/PLATFORM-${{ matrix.platform }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.platform }}
+          path: target/dist/*
+
+  publish:
+    needs: client
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Write latest.json
+        run: python3 scripts/latest_json.py artifacts "${GITHUB_REF_NAME}" "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" > latest.json
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            latest.json
+            artifacts/*/*
+          generate_release_notes: true
+
+  server-image:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}-server:${{ github.ref_name }}
+            ghcr.io/${{ github.repository }}-server:latest

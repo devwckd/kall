@@ -1,0 +1,14 @@
+# kall on the home server:  cd deploy && cp .env.example .env && (edit .env) && docker compose up -d --build
+services:
+  kall:
+    build: ..
+    image: kall-server:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "7744:7744/udp"
+    volumes:
+      - kall-data:/data
+
+volumes:
+  kall-data: {}
