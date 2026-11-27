@@ -4,6 +4,10 @@
 //! `cargo run -p kall -- --snap target/chat.png --scene chat` (scenes: login, chat, voice,
 //! settings, server).
 
+// Release builds are a windowed app on Windows: no console window next to kall. Dev builds
+// keep the console for logs.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 #![forbid(unsafe_code)]
 
 mod demo;
