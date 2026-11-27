@@ -1,0 +1,28 @@
+# Changelog
+
+Each release's section here is also the top of its GitHub release notes.
+
+## v0.2.0
+
+### New
+- **Screen shares are easy to spot.** The sharer's tile shows a live preview with a **Watch stream** button. Everyone in the call gets a toast with a **Watch** button and a sound. The sidebar shows a red **LIVE** pill (click it to watch) and a camera mark for cameras. (#1, #2)
+- **New share picker.** It has Screens and Windows tabs, a grid of live thumbnails, and clearer quality and sound options. (#2)
+- **Window sound only.** Sharing a window now shares only that app's sound. Sharing a whole screen still shares everything except kall. (#2)
+- **Quick audio panel.** Right-click the mute or deafen button to switch your microphone or speakers, change the volume, or toggle mute/deafen. (#3, #9)
+- **Mic volume and output volume** settings, in the quick panel and in Settings → Voice & audio. (#9)
+- Settings → App shows the app's version.
+
+### Fixed
+- **Avatar upload.** "Change avatar" opens the file picker again, and the new avatar is applied when you press Save. (#4, #8)
+
+### Upgrading
+- **Update the server too** (`docker compose pull && docker compose up -d`). Stream previews come from the new server. Older apps keep working with it, but they don't show previews.
+
+## v0.1.2
+- The ghost icon on the taskbar and on `kall.exe`.
+
+## v0.1.1
+- No more console window next to kall on Windows.
+
+## v0.1.0
+- First release: text chat, voice, screen share and webcam, invites and roles, home hosting with Let's Encrypt and DDNS, installers and signed auto-updates.

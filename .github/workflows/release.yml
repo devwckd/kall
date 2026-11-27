@@ -91,12 +91,17 @@ jobs:
           pattern: dist-*
       - name: Write latest.json
         run: python3 scripts/latest_json.py artifacts "${GITHUB_REF_NAME}" "https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}" > latest.json
+      # This version's CHANGELOG.md section goes first; GitHub's generated notes (PRs and the
+      # compare link) follow it.
+      - name: Changelog
+        run: python3 scripts/changelog.py "${GITHUB_REF_NAME}" > notes.md
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             latest.json
             artifacts/*/*
+          body_path: notes.md
           generate_release_notes: true
 
   server-image:

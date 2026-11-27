@@ -163,7 +163,7 @@ cargo run -p kall -- --snap chat.png --scene chat --theme light
 Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) whenever
 a `v*` tag is pushed:
 
-1. Bump `version` in the root `Cargo.toml` and commit.
+1. Bump `version` in the root `Cargo.toml`, add a section for the new version to [`CHANGELOG.md`](CHANGELOG.md) (it becomes the top of the release notes), and commit.
 2. Tag the commit and push the tag: `git tag v0.2.0 && git push --tags`.
 
 CI then:
