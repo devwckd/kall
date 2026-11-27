@@ -2,6 +2,12 @@
 
 Each release's section here is also the top of its GitHub release notes.
 
+## Unreleased
+
+### Changed
+- While watching a stream, the sharer's tile turns into **Stop watching**, and the separate button above the stage is gone. (#24)
+- The "Voice activity: just talk" pill is gone. Push-to-talk users see their key in the mic's right-click panel. (#25)
+
 ## v0.3.0
 
 ### New
