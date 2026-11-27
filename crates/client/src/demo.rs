@@ -67,6 +67,13 @@ pub const SCENES: &[(&str, fn(&mut State))] = &[
         load(s, 1);
         crate::ui::settings::open(s, Tab::Profile);
     }),
+    ("profile-new-avatar", |s| {
+        load(s, 1);
+        crate::ui::settings::open(s, Tab::Profile);
+        if let Some(set) = &mut s.settings {
+            set.avatar = Some((Vec::new(), fake_camera(128, 128)));
+        }
+    }),
     ("app-settings", |s| {
         load(s, 1);
         crate::ui::settings::open(s, Tab::App);

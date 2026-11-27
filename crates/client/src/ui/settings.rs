@@ -26,6 +26,7 @@ pub fn open(s: &mut State, tab: Tab) {
         confirm_delete: None,
         invite_uses: Some(1),
         invite_hours: Some(24 * 7),
+        avatar: None,
     });
     if tab == Tab::Invites {
         s.send(C2S::ListInvites);
@@ -71,23 +72,33 @@ fn chip(key: impl Into<String>, label: impl Into<String>, on: bool) -> El {
 
 fn profile(m: &Model, set: &Settings) -> El {
     let p = pal();
+    // A picked avatar shows here until the profile is saved (or the pick is undone).
+    let shown = match &set.avatar {
+        Some((_, px)) => el().key("avatar-new").size(80.0, 80.0).radius(40.0).clip_rounded(40.0).pixels(px),
+        None => avatar(m, m.me, 80.0, false),
+    };
+    let hint = if set.avatar.is_some() { "New avatar: press Save to use it." } else { "PNG, JPEG or WebP. It's cropped to a square." };
+    let mut actions = row().gap(8.0).child(button("avatar", "Change avatar", 0).on_press_tx(|_: &mut State, tx| {
+        let opts = FileDialogOptions { title: "Choose an avatar".into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "webp"]);
+        tx.open_file(opts, |s: &mut State, res, _| match res {
+            Ok(Some(path)) => s.cmd(NetCmd::PrepareAvatar(path)),
+            Ok(None) => {}
+            Err(e) => s.toast(format!("Couldn't open the file dialog: {e}")),
+        });
+    }));
+    if set.avatar.is_some() {
+        actions = actions.child(button("avatar-undo", "Undo", 0).on_press(|s: &mut State| st(s).avatar = None));
+    }
     let pic = row()
         .gap(16.0)
         .center_y()
-        .child(avatar(m, m.me, 80.0, false))
+        .child(shown)
         .child(
             col()
                 .gap(8.0)
                 .child(text("Avatar").font(type_::TITLE).color(p.text))
-                .child(text("PNG, JPEG or WebP. It's cropped to a square.").font(type_::LABEL).color(p.faint))
-                .child(row().child(button("avatar", "Change avatar", 0).on_press_tx(|_: &mut State, tx| {
-                    let opts = FileDialogOptions { title: "Choose an avatar".into(), ..Default::default() }.filter("Images", &["png", "jpg", "jpeg", "webp"]);
-                    tx.open_file(opts, |s: &mut State, res, _| match res {
-                        Ok(Some(path)) => s.cmd(NetCmd::UploadAvatar(path)),
-                        Ok(None) => {}
-                        Err(e) => s.toast(format!("Couldn't open the file dialog: {e}")),
-                    });
-                }))),
+                .child(text(hint).font(type_::LABEL).color(if set.avatar.is_some() { p.accent2 } else { p.faint }))
+                .child(actions),
         );
     let mut statuses = row().gap(6.0);
     for (st_, name) in [(Status::Online, "Online"), (Status::Idle, "Idle"), (Status::Dnd, "Do not disturb")] {
@@ -114,7 +125,11 @@ fn profile(m: &Model, set: &Settings) -> El {
         .child(row().w_full().pt(8.0).gap(8.0).child(el().grow(1.0)).child(button("save-profile", "Save", 1).on_press(|s: &mut State| {
             let set = st(s);
             let msg = C2S::SetProfile { display_name: set.display_name.text.clone(), status: set.status, status_text: set.status_text.text.clone() };
+            let avatar = set.avatar.take().map(|(png, _)| png);
             s.send(msg);
+            if let Some(png) = avatar {
+                s.send(C2S::SetAvatar { png });
+            }
             s.toast("Profile saved.");
         })))
         .child(el().h(1.0).w_full().fill(p.line).my(8.0))

@@ -7,7 +7,8 @@ license.workspace = true
 
 [dependencies]
 kall-proto = { workspace = true, features = ["client"] }
-rune.workspace = true
+# native-file-dialog: the avatar picker (Settings → My profile).
+rune = { workspace = true, features = ["native-file-dialog"] }
 rune-kit = { workspace = true, features = ["markdown"] }
 rune-notify.workspace = true
 anyhow.workspace = true
